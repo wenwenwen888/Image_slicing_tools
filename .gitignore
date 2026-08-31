@@ -1,0 +1,11 @@
+node_modules
+.pnpm-store
+dist
+src-tauri/target
+.DS_Store
+test*.png
+*.local
+coverage
+playwright-report
+test-results
+.local-rust
