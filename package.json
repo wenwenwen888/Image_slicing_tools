@@ -8,9 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "scripts/with-project-rust.sh tauri",
-    "desktop:dev": "scripts/with-project-rust.sh tauri dev",
-    "desktop:build": "scripts/with-project-rust.sh tauri build"
+    "test:e2e": "playwright test",
+    "tauri": "node scripts/with-project-rust.mjs tauri",
+    "desktop:dev": "node scripts/with-project-rust.mjs tauri dev",
+    "desktop:build": "node scripts/with-project-rust.mjs tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
@@ -30,6 +31,8 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "playwright": "^1.50.0",
+    "@playwright/test": "^1.50.0",
     "vitest": "^3.0.0"
-  }
+  },
+  "packageManager": "pnpm@10.15.0"
 }

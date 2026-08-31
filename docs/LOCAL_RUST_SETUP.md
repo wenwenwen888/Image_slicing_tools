@@ -1,30 +1,39 @@
 # 项目内 Rust 工具链说明
 
-Rust 已安装到当前项目目录下：
+如果仓库里有 `.local-rust`，桌面命令会优先用它：
 
 - Cargo Home：`.local-rust/cargo`
 - Rustup Home：`.local-rust/rustup`
 
-这个安装不会修改系统 PATH，也不会写入默认的用户级 `~/.cargo` 或 `~/.rustup`。
+没有这份目录时，会改用系统里已安装的 `rustc` / `cargo`。脚本不再依赖 Codex 或 macOS 专用路径，Windows、macOS、Linux 都可以用。
 
 ## 常用命令
 
-验证 Rust：
+推荐走 npm scripts（跨平台）：
 
 ```sh
-scripts/with-project-rust.sh rustc --version
-scripts/with-project-rust.sh cargo --version
+pnpm desktop:dev
+pnpm desktop:build
 ```
 
-启动桌面端开发模式：
+验证 Rust（可选）：
+
+```sh
+node scripts/with-project-rust.mjs rustc --version
+node scripts/with-project-rust.mjs cargo --version
+```
+
+Windows PowerShell 也可以直接跑：
+
+```powershell
+.\scripts\desktop-dev.ps1
+.\scripts\desktop-build.ps1
+```
+
+macOS / Linux 仍可使用：
 
 ```sh
 scripts/desktop-dev.sh
-```
-
-构建桌面端安装包：
-
-```sh
 scripts/desktop-build.sh
 ```
 
@@ -35,4 +44,3 @@ scripts/desktop-build.sh
 ```sh
 .local-rust
 ```
-
