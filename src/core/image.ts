@@ -2,6 +2,11 @@ import { MAX_ZOOM, MIN_ZOOM } from "./constants";
 import { clamp } from "./geometry";
 import type { ExportFormat, SliceRegion } from "./types";
 
+export type TransparentBackgroundOptions = {
+  color: string;
+  tolerance: number;
+};
+
 export function calculateFitZoom(imageWidth: number, imageHeight: number) {
   const panel = document.querySelector(".canvas-panel");
 
@@ -60,6 +65,7 @@ export async function renderSlice(
   format: ExportFormat,
   jpgBackground: string,
   outputSize?: { width: number; height: number },
+  transparentBackground?: TransparentBackgroundOptions | null,
 ) {
   const canvas = document.createElement("canvas");
   canvas.width = outputSize?.width ?? slice.width;
@@ -75,6 +81,7 @@ export async function renderSlice(
     context.fillRect(0, 0, canvas.width, canvas.height);
   }
 
+  const didClip = applySliceClip(context, slice, canvas.width, canvas.height);
   context.drawImage(
     image,
     slice.x,
@@ -86,8 +93,97 @@ export async function renderSlice(
     canvas.width,
     canvas.height,
   );
+  if (didClip) {
+    context.restore();
+  }
+
+  if (format !== "jpg" && transparentBackground) {
+    eraseBackgroundPixels(context, canvas.width, canvas.height, transparentBackground);
+  }
 
   return canvasToBlob(canvas, getMimeType(format), format === "jpg" ? 0.92 : undefined);
+}
+
+function eraseBackgroundPixels(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  options: TransparentBackgroundOptions,
+) {
+  const target = parseHexColor(options.color);
+  if (!target) {
+    return;
+  }
+
+  const imageData = context.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+  const tolerance = Math.max(0, Math.min(options.tolerance, 255));
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const distance = Math.max(
+      Math.abs(pixels[index] - target.r),
+      Math.abs(pixels[index + 1] - target.g),
+      Math.abs(pixels[index + 2] - target.b),
+    );
+    if (distance <= tolerance) {
+      pixels[index + 3] = 0;
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
+function parseHexColor(color: string) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(color.trim());
+  if (!match) {
+    return null;
+  }
+
+  const value = Number.parseInt(match[1], 16);
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255,
+  };
+}
+
+function applySliceClip(context: CanvasRenderingContext2D, slice: SliceRegion, width: number, height: number) {
+  const shape = slice.shape ?? "rect";
+  if (shape === "rect") {
+    return false;
+  }
+
+  context.save();
+  context.beginPath();
+
+  if (shape === "ellipse") {
+    context.ellipse(width / 2, height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+  } else {
+    const radius = Math.max(0, Math.min(slice.cornerRadius ?? 12, width / 2, height / 2));
+    roundedRectPath(context, 0, 0, width, height, radius);
+  }
+
+  context.clip();
+  return true;
+}
+
+function roundedRectPath(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
 }
 
 export async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: number) {

@@ -1,4 +1,4 @@
-import type { GridMode, GridOrder, ImageSize, SliceRegion } from "./types";
+import type { GridMode, GridOrder, ImageSize, SliceRegion, SliceShape } from "./types";
 
 export function buildGridSlices({
   imageSize,
@@ -13,6 +13,8 @@ export function buildGridSlices({
   columns,
   order,
   nameOffset,
+  shape = "rect",
+  cornerRadius = 12,
 }: {
   imageSize: ImageSize;
   mode: GridMode;
@@ -26,6 +28,8 @@ export function buildGridSlices({
   columns: number;
   order: GridOrder;
   nameOffset: number;
+  shape?: SliceShape;
+  cornerRadius?: number;
 }) {
   const normalizedRows = Math.max(Math.round(rows), 1);
   const normalizedColumns = Math.max(Math.round(columns), 1);
@@ -74,6 +78,8 @@ export function buildGridSlices({
         y,
         width: normalizedCellWidth,
         height: normalizedCellHeight,
+        shape,
+        cornerRadius,
         enabled: true,
         locked: false,
       };

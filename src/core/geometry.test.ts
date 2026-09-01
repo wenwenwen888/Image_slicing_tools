@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clamp, normalizeRect, resizeSlice } from "./geometry";
+import { clamp, getAspectRatioValue, normalizeRect, resizeSlice } from "./geometry";
 import type { SliceRegion } from "./types";
 
 const image = { width: 100, height: 80 };
@@ -52,6 +52,21 @@ describe("选区坐标转换", () => {
     });
   });
 
+  it("按固定比例归一绘制矩形", () => {
+    expect(normalizeRect(0, 0, 60, 20, image, getAspectRatioValue("1:1"))).toEqual({
+      x: 0,
+      y: 0,
+      width: 60,
+      height: 60,
+    });
+    expect(normalizeRect(0, 0, 160, 40, image, getAspectRatioValue("16:9"))).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 56,
+    });
+  });
+
   it("从东南角拉大选区并限制在图片内", () => {
     expect(resizeSlice(makeSlice(), "se", 10, 4, image)).toEqual({
       x: 10,
@@ -73,6 +88,15 @@ describe("选区坐标转换", () => {
       y: 12,
       width: 16,
       height: 14,
+    });
+  });
+
+  it("按固定比例缩放切片", () => {
+    expect(resizeSlice(makeSlice({ width: 20, height: 20 }), "se", 30, 4, image, getAspectRatioValue("1:1"))).toEqual({
+      x: 10,
+      y: 10,
+      width: 50,
+      height: 50,
     });
   });
 

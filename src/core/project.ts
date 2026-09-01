@@ -1,5 +1,18 @@
 import { ACCEPTED_IMAGE_TYPES } from "./constants";
-import type { CustomIconOutput, ExportFormat, ExportScope, GridMode, GridOrder, ScanMode, SliceRegion, TargetPlatform } from "./types";
+import type {
+  CustomIconOutput,
+  ExportFormat,
+  ExportMode,
+  ExportScope,
+  GridMode,
+  GridOrder,
+  AspectRatioPreset,
+  SliceShape,
+  ScanMergeStrategy,
+  ScanMode,
+  SliceRegion,
+  TargetPlatform,
+} from "./types";
 
 export type SavedProject = {
   version: 1;
@@ -20,6 +33,7 @@ export type SavedProject = {
 
 export type ProjectSettings = {
   exportFormat: ExportFormat;
+  exportMode?: ExportMode;
   exportScope: ExportScope;
   targetPlatform: TargetPlatform;
   enabledWebOutputIds: string[];
@@ -28,6 +42,10 @@ export type ProjectSettings = {
   androidResourceName: string;
   filePrefix: string;
   jpgBackground: string;
+  exportTransparentBackground?: boolean;
+  defaultSliceShape?: SliceShape;
+  defaultCornerRadius?: number;
+  aspectRatioPreset?: AspectRatioPreset;
   gridMode: GridMode;
   gridWidth: number;
   gridHeight: number;
@@ -39,6 +57,11 @@ export type ProjectSettings = {
   gridColumns: number;
   gridOrder: GridOrder;
   scanMode: ScanMode;
+  scanMergeStrategy?: ScanMergeStrategy;
+  scanMergeDistance?: number;
+  scanBridgeGap?: number;
+  scanIgnoreText?: boolean;
+  scanTransparentBackground?: boolean;
   scanAlphaThreshold: number;
   scanBackgroundColor: string;
   scanColorTolerance: number;

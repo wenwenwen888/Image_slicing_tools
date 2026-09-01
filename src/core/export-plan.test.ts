@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildAndroidExportPlan,
   buildCustomExportPlan,
+  buildExportPreview,
+  buildExportWarnings,
   buildGenericExportPlan,
   buildIosExportPlan,
   buildWebExportPlan,
@@ -90,15 +92,19 @@ describe("导出清单生成", () => {
   it("Android 资源包写入 res/mipmap-* 并清理资源名", () => {
     const plan = buildAndroidExportPlan([makeSlice()], ANDROID_ICON_OUTPUTS, "source.png", "app", "2 Home Icon");
 
-    expect(plan.imageFiles.map((file) => file.path)).toEqual([
+    expect(plan.imageFiles.map((file) => file.path).slice(0, 5)).toEqual([
       "android-res/res/mipmap-mdpi/ic_2_home_icon.png",
       "android-res/res/mipmap-hdpi/ic_2_home_icon.png",
       "android-res/res/mipmap-xhdpi/ic_2_home_icon.png",
       "android-res/res/mipmap-xxhdpi/ic_2_home_icon.png",
       "android-res/res/mipmap-xxxhdpi/ic_2_home_icon.png",
     ]);
-    expect(plan.textFiles[0]?.path).toBe("android-res/export-report.md");
-    expect(plan.textFiles[0]?.content).toContain("Resource name: ic_2_home_icon");
+    expect(plan.imageFiles.map((file) => file.path)).toContain("android-res/res/mipmap-xxxhdpi/ic_2_home_icon_foreground.png");
+    expect(plan.textFiles.map((file) => file.path)).toContain("android-res/res/mipmap-anydpi-v26/ic_launcher.xml");
+    expect(plan.textFiles.map((file) => file.path)).toContain("android-res/res/values/ic_2_home_icon_background.xml");
+    expect(plan.textFiles.find((file) => file.path === "android-res/export-report.md")?.content).toContain(
+      "Resource name: ic_2_home_icon",
+    );
   });
 
   it("iOS 资源包生成 AppIcon.appiconset 和 Contents.json", () => {
@@ -133,5 +139,30 @@ describe("导出清单生成", () => {
       savedAt: "2026-01-01T00:00:00.000Z",
       outputs: allOutputs,
     });
+  });
+
+  it("导出预览显示文件数量、示例路径和平台警告", () => {
+    const plan = buildWebExportPlan([makeSlice({ width: 48, height: 64 })], WEB_ICON_OUTPUTS, "source.png", "site");
+    const warnings = buildExportWarnings(
+      {
+        fileName: "source.png",
+        fileSize: 100,
+        mimeType: "image/png",
+        width: 100,
+        height: 100,
+        hasAlpha: true,
+        url: "blob:test",
+      },
+      [makeSlice({ width: 48, height: 64 })],
+      "web",
+      WEB_ICON_OUTPUTS,
+    );
+    const preview = buildExportPreview(plan, warnings);
+
+    expect(preview.archiveName).toBe("site_web_icons.zip");
+    expect(preview.imageCount).toBe(WEB_ICON_OUTPUTS.length);
+    expect(preview.totalCount).toBeGreaterThan(preview.imageCount);
+    expect(preview.samplePaths[0]).toBe("web-icons/favicon-16x16.png");
+    expect(preview.warnings[0]).toContain("maskable icon");
   });
 });

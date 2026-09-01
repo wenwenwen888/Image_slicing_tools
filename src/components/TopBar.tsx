@@ -1,7 +1,8 @@
-import { FileUp, FolderOpen, Redo2, Save, Undo2, ZoomIn, ZoomOut, Download } from "lucide-react";
+import { Download, FileUp, FolderOpen, Redo2, Save, Undo2, XCircle, ZoomIn, ZoomOut } from "lucide-react";
 import { ChangeEvent, useRef } from "react";
 import appIcon from "../assets/app-icon.png";
 import { Hint } from "./Hint";
+import { ImageInfoPanel } from "./ImageInfoPanel";
 import { getExportSlices, getPlatformOutputCount } from "../core/export";
 import { ANDROID_ICON_OUTPUTS, IOS_ICON_OUTPUTS, WEB_ICON_OUTPUTS } from "../core/presets";
 import { useWorkspaceStore } from "../store/workspace-store";
@@ -32,6 +33,7 @@ export function TopBar() {
   const openProjectFile = useWorkspaceStore((state) => state.openProjectFile);
   const saveProjectFile = useWorkspaceStore((state) => state.saveProjectFile);
   const handleExport = useWorkspaceStore((state) => state.handleExport);
+  const closeCurrentImage = useWorkspaceStore((state) => state.closeCurrentImage);
 
   const zoomLabel = `${Math.round(zoom * 100)}%`;
   const exportSlices = getExportSlices(slices, exportScope, selectedSliceId);
@@ -59,12 +61,18 @@ export function TopBar() {
     event.target.value = "";
   }
 
+  function confirmCloseCurrentImage() {
+    if (window.confirm("确定关闭当前图片？关闭后会清空当前图片和所有选区。")) {
+      closeCurrentImage();
+    }
+  }
+
   return (
     <header className="top-bar">
       <div className="brand">
         <img alt="" className="brand-mark" height={36} src={appIcon} width={36} />
         <div>
-          <h1>Image Slicing Tools</h1>
+          <h1>图片切图工具</h1>
           <p>跨平台图片切图工作台</p>
         </div>
       </div>
@@ -107,6 +115,18 @@ export function TopBar() {
             <Save size={16} />
           </button>
         </Hint>
+        <Hint text="关闭当前图片，并清空画布和选区。">
+          <button
+            aria-label="关闭当前图片"
+            className="icon-button"
+            data-testid="close-image-button"
+            disabled={!imageDocument}
+            onClick={confirmCloseCurrentImage}
+            type="button"
+          >
+            <XCircle size={16} />
+          </button>
+        </Hint>
         <Hint text="撤销上一步切片编辑。">
           <button className="icon-button" disabled={pastSlices.length === 0} onClick={undo} type="button" aria-label="撤销">
             <Undo2 size={16} />
@@ -118,6 +138,7 @@ export function TopBar() {
           </button>
         </Hint>
         <span className="divider" />
+        <ImageInfoPanel />
         <Hint text="缩小画布。">
           <button
             className="icon-button"

@@ -1,4 +1,12 @@
-import type { ScanMode, SliceRegion } from "./types";
+import type { ScanMergeStrategy, ScanMode, SliceRegion } from "./types";
+
+type DetectedRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  area: number;
+};
 
 export function findConnectedRegions(
   imageData: ImageData,
@@ -11,6 +19,10 @@ export function findConnectedRegions(
     minSize,
     padding,
     nameOffset,
+    mergeStrategy = "nearby",
+    mergeDistance = 8,
+    bridgeGap = 1,
+    ignoreText = true,
   }: {
     mode: ScanMode;
     alphaThreshold: number;
@@ -20,17 +32,22 @@ export function findConnectedRegions(
     minSize: number;
     padding: number;
     nameOffset: number;
+    mergeStrategy?: ScanMergeStrategy;
+    mergeDistance?: number;
+    bridgeGap?: number;
+    ignoreText?: boolean;
   },
 ) {
   const { width, height } = imageData;
-  const foreground = createForegroundMask(imageData, {
+  let foreground: Uint8Array<ArrayBufferLike> = createForegroundMask(imageData, {
     mode,
     alphaThreshold,
     backgroundColor,
     colorTolerance,
   });
+  foreground = bridgeGap > 0 ? dilateMask(foreground, width, height, bridgeGap) : foreground;
   const visited = new Uint8Array(width * height);
-  const regions: Array<{ x: number; y: number; width: number; height: number; area: number }> = [];
+  const regions: DetectedRegion[] = [];
 
   for (let startIndex = 0; startIndex < visited.length; startIndex += 1) {
     if (visited[startIndex]) {
@@ -69,6 +86,10 @@ export function findConnectedRegions(
         x < width - 1 ? pixelIndex + 1 : -1,
         y > 0 ? pixelIndex - width : -1,
         y < height - 1 ? pixelIndex + width : -1,
+        x > 0 && y > 0 ? pixelIndex - width - 1 : -1,
+        x < width - 1 && y > 0 ? pixelIndex - width + 1 : -1,
+        x > 0 && y < height - 1 ? pixelIndex + width - 1 : -1,
+        x < width - 1 && y < height - 1 ? pixelIndex + width + 1 : -1,
       ];
 
       for (const neighborIndex of neighbors) {
@@ -86,7 +107,15 @@ export function findConnectedRegions(
     const regionWidth = maxX - minX + 1;
     const regionHeight = maxY - minY + 1;
 
-    if (area >= minArea && regionWidth >= minSize && regionHeight >= minSize) {
+    const region = {
+      x: minX,
+      y: minY,
+      width: regionWidth,
+      height: regionHeight,
+      area,
+    };
+
+    if (shouldKeepRegion(region, minArea, minSize, ignoreText)) {
       const paddedX = Math.max(minX - padding, 0);
       const paddedY = Math.max(minY - padding, 0);
       const paddedRight = Math.min(maxX + padding + 1, width);
@@ -102,7 +131,11 @@ export function findConnectedRegions(
     }
   }
 
-  return regions
+  const mergedRegions = mergeRegions(regions, mergeStrategy, mergeDistance, width, height).filter((region) =>
+    shouldKeepRegion(region, minArea, minSize, ignoreText),
+  );
+
+  return mergedRegions
     .sort((left, right) => left.y - right.y || left.x - right.x || right.area - left.area)
     .map((region, index): SliceRegion => ({
       id: crypto.randomUUID(),
@@ -114,6 +147,134 @@ export function findConnectedRegions(
       enabled: true,
       locked: false,
     }));
+}
+
+function shouldKeepRegion(region: DetectedRegion, minArea: number, minSize: number, ignoreText: boolean) {
+  if (region.area < minArea || region.width < minSize || region.height < minSize) {
+    return false;
+  }
+
+  return !ignoreText || !isTextLikeRegion(region);
+}
+
+function isTextLikeRegion(region: DetectedRegion) {
+  const aspectRatio = Math.max(region.width / region.height, region.height / region.width);
+  const fillRatio = region.area / Math.max(region.width * region.height, 1);
+
+  if (region.width >= 18 && region.height <= 28 && region.width / region.height >= 1.8 && fillRatio <= 0.56) {
+    return true;
+  }
+
+  if (region.width >= 32 && region.width / region.height >= 3.2 && fillRatio <= 0.62) {
+    return true;
+  }
+
+  if (region.height >= 32 && region.height / region.width >= 3.8 && fillRatio <= 0.5) {
+    return true;
+  }
+
+  return aspectRatio >= 5.5;
+}
+
+function mergeRegions(
+  regions: DetectedRegion[],
+  strategy: ScanMergeStrategy,
+  mergeDistance: number,
+  imageWidth: number,
+  imageHeight: number,
+) {
+  if (strategy === "none" || regions.length <= 1) {
+    return regions;
+  }
+
+  const distance = Math.max(0, Math.round(mergeDistance));
+  const merged = [...regions];
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+
+    for (let leftIndex = 0; leftIndex < merged.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < merged.length; rightIndex += 1) {
+        if (!shouldMergeRegions(merged[leftIndex], merged[rightIndex], strategy, distance)) {
+          continue;
+        }
+
+        merged[leftIndex] = unionRegions(merged[leftIndex], merged[rightIndex], imageWidth, imageHeight);
+        merged.splice(rightIndex, 1);
+        changed = true;
+        break;
+      }
+
+      if (changed) {
+        break;
+      }
+    }
+  }
+
+  return merged;
+}
+
+function shouldMergeRegions(left: DetectedRegion, right: DetectedRegion, strategy: ScanMergeStrategy, distance: number) {
+  if (strategy === "row") {
+    const overlapY = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+    const minHeight = Math.min(left.height, right.height);
+    const gapX = Math.max(right.x - (left.x + left.width), left.x - (right.x + right.width), 0);
+    return overlapY >= minHeight * 0.35 && gapX <= distance;
+  }
+
+  return getRegionDistance(left, right) <= distance;
+}
+
+function unionRegions(left: DetectedRegion, right: DetectedRegion, imageWidth: number, imageHeight: number): DetectedRegion {
+  const minX = Math.max(Math.min(left.x, right.x), 0);
+  const minY = Math.max(Math.min(left.y, right.y), 0);
+  const maxX = Math.min(Math.max(left.x + left.width, right.x + right.width), imageWidth);
+  const maxY = Math.min(Math.max(left.y + left.height, right.y + right.height), imageHeight);
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+    area: left.area + right.area,
+  };
+}
+
+function getRegionDistance(left: DetectedRegion, right: DetectedRegion) {
+  const gapX = Math.max(right.x - (left.x + left.width), left.x - (right.x + right.width), 0);
+  const gapY = Math.max(right.y - (left.y + left.height), left.y - (right.y + right.height), 0);
+  return Math.sqrt(gapX * gapX + gapY * gapY);
+}
+
+function dilateMask(mask: Uint8Array<ArrayBufferLike>, width: number, height: number, radius: number) {
+  const safeRadius = Math.max(0, Math.min(Math.round(radius), 8));
+  if (safeRadius === 0) {
+    return mask;
+  }
+
+  const next = new Uint8Array(mask.length);
+  next.set(mask);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixelIndex = y * width + x;
+      if (!mask[pixelIndex]) {
+        continue;
+      }
+
+      for (let offsetY = -safeRadius; offsetY <= safeRadius; offsetY += 1) {
+        for (let offsetX = -safeRadius; offsetX <= safeRadius; offsetX += 1) {
+          const nextX = x + offsetX;
+          const nextY = y + offsetY;
+          if (nextX >= 0 && nextY >= 0 && nextX < width && nextY < height) {
+            next[nextY * width + nextX] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  return next;
 }
 
 function createForegroundMask(

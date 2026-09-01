@@ -10,6 +10,8 @@ export type SliceRegion = {
   y: number;
   width: number;
   height: number;
+  shape?: SliceShape;
+  cornerRadius?: number;
   enabled: boolean;
   locked: boolean;
 };
@@ -18,6 +20,9 @@ export type ResizeHandle = "nw" | "ne" | "sw" | "se";
 export type GridMode = "fixed" | "equal";
 export type GridOrder = "row" | "column";
 export type ExportFormat = "png" | "jpg" | "webp";
+export type ExportMode = "zip" | "folder";
+export type SliceShape = "rect" | "rounded" | "ellipse";
+export type AspectRatioPreset = "free" | "1:1" | "4:3" | "16:9" | "3:2";
 
 export type WebIconOutput = {
   id: string;
@@ -69,10 +74,11 @@ export type PanState = {
   y: number;
 };
 
-export type ToolId = "select" | "rect" | "grid" | "scan";
+export type ToolId = "select" | "rect" | "rounded" | "square" | "circle" | "ellipse" | "grid" | "scan";
 export type ExportScope = "selected" | "enabled";
 export type TargetPlatform = "generic" | "android" | "ios" | "web" | "custom";
 export type ScanMode = "auto" | "alpha" | "color";
+export type ScanMergeStrategy = "none" | "nearby" | "row";
 
 export type Interaction =
   | { mode: "pan"; pointerX: number; pointerY: number; pan: PanState }

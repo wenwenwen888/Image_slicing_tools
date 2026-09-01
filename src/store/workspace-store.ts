@@ -9,22 +9,27 @@ import { sanitizeAndroidResourceName, sanitizeCustomOutputFileName, sanitizeFile
 import { ANDROID_ICON_OUTPUTS, IOS_ICON_OUTPUTS } from "../core/presets";
 import { isCustomPresetFile, isSavedProject, type ProjectSettings } from "../core/project";
 import { findConnectedRegions } from "../core/scan";
+import { findOpaqueBounds } from "../core/trim";
 import type {
   CustomIconOutput,
+  AspectRatioPreset,
   ExportFormat,
+  ExportMode,
   ExportScope,
   GridMode,
   GridOrder,
   ImageDocument,
   PanState,
+  ScanMergeStrategy,
   ScanMode,
   SliceRegion,
+  SliceShape,
   TargetPlatform,
   ToolId,
 } from "../core/types";
 import { openImageFromDesktopDialog } from "../platform/open-image";
 import { isTauriRuntime } from "../platform/runtime";
-import { saveBlob } from "../platform/save";
+import { openPath, saveBlob } from "../platform/save";
 
 type WorkspaceState = {
   imageDocument: ImageDocument | null;
@@ -41,6 +46,7 @@ type WorkspaceState = {
   pointerInfo: string;
   errorMessage: string | null;
   exportFormat: ExportFormat;
+  exportMode: ExportMode;
   exportScope: ExportScope;
   targetPlatform: TargetPlatform;
   enabledWebOutputIds: string[];
@@ -49,7 +55,12 @@ type WorkspaceState = {
   androidResourceName: string;
   filePrefix: string;
   jpgBackground: string;
+  exportTransparentBackground: boolean;
   isExporting: boolean;
+  lastExportDirectory: string | null;
+  defaultSliceShape: SliceShape;
+  defaultCornerRadius: number;
+  aspectRatioPreset: AspectRatioPreset;
   gridMode: GridMode;
   gridWidth: number;
   gridHeight: number;
@@ -61,6 +72,10 @@ type WorkspaceState = {
   gridColumns: number;
   gridOrder: GridOrder;
   scanMode: ScanMode;
+  scanMergeStrategy: ScanMergeStrategy;
+  scanMergeDistance: number;
+  scanBridgeGap: number;
+  scanIgnoreText: boolean;
   scanAlphaThreshold: number;
   scanBackgroundColor: string;
   scanColorTolerance: number;
@@ -68,6 +83,8 @@ type WorkspaceState = {
   scanMinSize: number;
   scanPadding: number;
   isScanning: boolean;
+  isPickingScanBackground: boolean;
+  scanPreviewSlices: SliceRegion[];
   customIconOutputs: CustomIconOutput[];
   enabledCustomOutputIds: string[];
   setActiveTool: (tool: ToolId) => void;
@@ -78,11 +95,16 @@ type WorkspaceState = {
   setStatusText: (statusText: string) => void;
   setSelectedSliceId: (selectedSliceId: string | null) => void;
   setExportFormat: (exportFormat: ExportFormat) => void;
+  setExportMode: (exportMode: ExportMode) => void;
   setExportScope: (exportScope: ExportScope) => void;
   setTargetPlatform: (targetPlatform: TargetPlatform) => void;
   setFilePrefix: (filePrefix: string) => void;
   setJpgBackground: (jpgBackground: string) => void;
+  setExportTransparentBackground: (exportTransparentBackground: boolean) => void;
   setAndroidResourceName: (androidResourceName: string) => void;
+  setDefaultSliceShape: (defaultSliceShape: SliceShape) => void;
+  setDefaultCornerRadius: (defaultCornerRadius: number) => void;
+  setAspectRatioPreset: (aspectRatioPreset: AspectRatioPreset) => void;
   setGridMode: (gridMode: GridMode) => void;
   setGridWidth: (gridWidth: number) => void;
   setGridHeight: (gridHeight: number) => void;
@@ -94,6 +116,10 @@ type WorkspaceState = {
   setGridColumns: (gridColumns: number) => void;
   setGridOrder: (gridOrder: GridOrder) => void;
   setScanMode: (scanMode: ScanMode) => void;
+  setScanMergeStrategy: (scanMergeStrategy: ScanMergeStrategy) => void;
+  setScanMergeDistance: (scanMergeDistance: number) => void;
+  setScanBridgeGap: (scanBridgeGap: number) => void;
+  setScanIgnoreText: (scanIgnoreText: boolean) => void;
   setScanAlphaThreshold: (scanAlphaThreshold: number) => void;
   setScanBackgroundColor: (scanBackgroundColor: string) => void;
   setScanColorTolerance: (scanColorTolerance: number) => void;
@@ -105,9 +131,13 @@ type WorkspaceState = {
   pushHistory: () => void;
   updateSlice: (sliceId: string, patch: Partial<SliceRegion>) => void;
   deleteSlice: (sliceId: string) => void;
+  clearSlices: () => void;
+  closeCurrentImage: () => void;
   undo: () => void;
   redo: () => void;
   handleNumericChange: (field: "x" | "y" | "width" | "height", value: string) => void;
+  trimSelectedSlice: () => Promise<void>;
+  trimAllSlices: () => Promise<void>;
   toggleWebOutput: (outputId: string, enabled: boolean) => void;
   toggleAndroidOutput: (outputId: string, enabled: boolean) => void;
   toggleIosOutput: (outputId: string, enabled: boolean) => void;
@@ -117,6 +147,11 @@ type WorkspaceState = {
   removeCustomOutput: (outputId: string) => void;
   generateGridSlices: (replaceExisting: boolean) => void;
   detectIconSlices: (replaceExisting: boolean) => Promise<void>;
+  applyScanPreview: (replaceExisting: boolean) => void;
+  removeScanPreviewSlice: (sliceId: string) => void;
+  clearScanPreview: () => void;
+  startPickScanBackground: () => void;
+  sampleScanBackgroundAt: (x: number, y: number) => Promise<void>;
   openFile: (file: File) => Promise<void>;
   openDroppedFile: (file: File) => Promise<void>;
   handleOpenImageClick: (fileInput: HTMLInputElement | null) => Promise<void>;
@@ -124,6 +159,7 @@ type WorkspaceState = {
   saveProjectFile: () => Promise<void>;
   openCustomPresetFile: (file: File) => Promise<void>;
   saveCustomPresetFile: () => Promise<void>;
+  openLastExportDirectory: () => Promise<void>;
   handleExport: () => Promise<void>;
 };
 
@@ -158,6 +194,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   pointerInfo: "坐标 0, 0",
   errorMessage: null,
   exportFormat: "png",
+  exportMode: "zip",
   exportScope: "enabled",
   targetPlatform: "generic",
   enabledWebOutputIds: DEFAULT_WEB_OUTPUT_IDS,
@@ -166,7 +203,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   androidResourceName: "ic_launcher",
   filePrefix: "slice",
   jpgBackground: "#ffffff",
+  exportTransparentBackground: true,
   isExporting: false,
+  lastExportDirectory: null,
+  defaultSliceShape: "rect",
+  defaultCornerRadius: 12,
+  aspectRatioPreset: "free",
   gridMode: "fixed",
   gridWidth: 128,
   gridHeight: 128,
@@ -178,6 +220,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   gridColumns: 3,
   gridOrder: "row",
   scanMode: "auto",
+  scanMergeStrategy: "nearby",
+  scanMergeDistance: 8,
+  scanBridgeGap: 1,
+  scanIgnoreText: true,
   scanAlphaThreshold: 16,
   scanBackgroundColor: "#ffffff",
   scanColorTolerance: 24,
@@ -185,6 +231,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   scanMinSize: 4,
   scanPadding: 2,
   isScanning: false,
+  isPickingScanBackground: false,
+  scanPreviewSlices: [],
   customIconOutputs: DEFAULT_CUSTOM_ICON_OUTPUTS,
   enabledCustomOutputIds: DEFAULT_CUSTOM_ICON_OUTPUTS.map((output) => output.id),
   setActiveTool: (activeTool) => set({ activeTool }),
@@ -195,11 +243,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setStatusText: (statusText) => set({ statusText }),
   setSelectedSliceId: (selectedSliceId) => set({ selectedSliceId }),
   setExportFormat: (exportFormat) => set({ exportFormat }),
+  setExportMode: (exportMode) => set({ exportMode }),
   setExportScope: (exportScope) => set({ exportScope }),
   setTargetPlatform: (targetPlatform) => set({ targetPlatform }),
   setFilePrefix: (filePrefix) => set({ filePrefix }),
   setJpgBackground: (jpgBackground) => set({ jpgBackground }),
+  setExportTransparentBackground: (exportTransparentBackground) => set({ exportTransparentBackground }),
   setAndroidResourceName: (androidResourceName) => set({ androidResourceName: sanitizeAndroidResourceName(androidResourceName) }),
+  setDefaultSliceShape: (defaultSliceShape) => set({ defaultSliceShape }),
+  setDefaultCornerRadius: (defaultCornerRadius) => set({ defaultCornerRadius }),
+  setAspectRatioPreset: (aspectRatioPreset) => set({ aspectRatioPreset }),
   setGridMode: (gridMode) => set({ gridMode }),
   setGridWidth: (gridWidth) => set({ gridWidth }),
   setGridHeight: (gridHeight) => set({ gridHeight }),
@@ -211,6 +264,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setGridColumns: (gridColumns) => set({ gridColumns }),
   setGridOrder: (gridOrder) => set({ gridOrder }),
   setScanMode: (scanMode) => set({ scanMode }),
+  setScanMergeStrategy: (scanMergeStrategy) => set({ scanMergeStrategy }),
+  setScanMergeDistance: (scanMergeDistance) => set({ scanMergeDistance }),
+  setScanBridgeGap: (scanBridgeGap) => set({ scanBridgeGap }),
+  setScanIgnoreText: (scanIgnoreText) => set({ scanIgnoreText }),
   setScanAlphaThreshold: (scanAlphaThreshold) => set({ scanAlphaThreshold }),
   setScanBackgroundColor: (scanBackgroundColor) => set({ scanBackgroundColor }),
   setScanColorTolerance: (scanColorTolerance) => set({ scanColorTolerance }),
@@ -248,6 +305,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       slices: state.slices.filter((slice) => slice.id !== sliceId),
       selectedSliceId: state.selectedSliceId === sliceId ? null : state.selectedSliceId,
       statusText: "选区已删除",
+    }));
+  },
+  clearSlices: () => {
+    const { slices } = get();
+    if (slices.length === 0) {
+      set({ statusText: "没有可移除的选区" });
+      return;
+    }
+
+    get().pushHistory();
+    set({ slices: [], selectedSliceId: null, scanPreviewSlices: [], statusText: "已移除所有选区" });
+  },
+  closeCurrentImage: () => {
+    set((state) => ({
+      imageDocument: replaceImage(state.imageDocument, null),
+      slices: [],
+      pastSlices: [],
+      futureSlices: [],
+      selectedSliceId: null,
+      scanPreviewSlices: [],
+      isPickingScanBackground: false,
+      pan: { x: 0, y: 0 },
+      zoom: 1,
+      pointerInfo: "坐标 0, 0",
+      statusText: "当前图片已关闭",
+      errorMessage: null,
     }));
   },
   undo: () => {
@@ -324,6 +407,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
     }
   },
+  trimSelectedSlice: async () => {
+    const { selectedSliceId } = get();
+    if (!selectedSliceId) {
+      set({ statusText: "请先选择一个切片" });
+      return;
+    }
+
+    await trimSlices([selectedSliceId], get, set);
+  },
+  trimAllSlices: async () => {
+    const sliceIds = get()
+      .slices.filter((slice) => !slice.locked)
+      .map((slice) => slice.id);
+    await trimSlices(sliceIds, get, set);
+  },
   toggleWebOutput: (outputId, enabled) => {
     set((state) => ({ enabledWebOutputIds: toggleId(state.enabledWebOutputIds, outputId, enabled) }));
   },
@@ -382,6 +480,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       columns: state.gridColumns,
       order: state.gridOrder,
       nameOffset: replaceExisting ? 0 : state.slices.length,
+      shape: state.defaultSliceShape,
+      cornerRadius: state.defaultCornerRadius,
     });
 
     if (nextSlices.length === 0) {
@@ -397,7 +497,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       errorMessage: null,
       slices: replaceExisting ? nextSlices : [...current.slices, ...nextSlices],
       selectedSliceId: nextSlices[0].id,
-      activeTool: "select",
+      activeTool: "grid",
       statusText: `已生成 ${nextSlices.length} 个网格切片`,
     }));
   },
@@ -440,6 +540,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         minSize: state.scanMinSize,
         padding: state.scanPadding,
         nameOffset: replaceExisting ? 0 : state.slices.length,
+        mergeStrategy: state.scanMergeStrategy,
+        mergeDistance: state.scanMergeDistance,
+        bridgeGap: state.scanBridgeGap,
+        ignoreText: state.scanIgnoreText,
       });
 
       if (nextSlices.length === 0) {
@@ -450,13 +554,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         return;
       }
 
-      get().pushHistory();
-      set((current) => ({
-        slices: replaceExisting ? nextSlices : [...current.slices, ...nextSlices],
+      set({
+        scanPreviewSlices: nextSlices,
         selectedSliceId: nextSlices[0].id,
-        activeTool: "select",
-        statusText: `已识别 ${nextSlices.length} 个区域`,
-      }));
+        activeTool: "scan",
+        statusText: `已预览 ${nextSlices.length} 个识别区域`,
+      });
     } catch {
       set({
         errorMessage: "智能识别失败，请换一张图片或调整参数后再试。",
@@ -464,6 +567,67 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
     } finally {
       set({ isScanning: false });
+    }
+  },
+  applyScanPreview: (replaceExisting) => {
+    const state = get();
+    if (state.scanPreviewSlices.length === 0) {
+      set({ statusText: "没有可应用的识别预览" });
+      return;
+    }
+
+    const nextSlices = state.scanPreviewSlices.map((slice) => ({ ...slice, id: crypto.randomUUID() }));
+    state.pushHistory();
+    set((current) => ({
+      slices: replaceExisting ? nextSlices : [...current.slices, ...nextSlices],
+      scanPreviewSlices: [],
+      selectedSliceId: nextSlices[0]?.id ?? null,
+      activeTool: "select",
+      statusText: replaceExisting ? `已替换为 ${nextSlices.length} 个识别切片` : `已追加 ${nextSlices.length} 个识别切片`,
+    }));
+  },
+  removeScanPreviewSlice: (sliceId) => {
+    set((state) => ({
+      scanPreviewSlices: state.scanPreviewSlices.filter((slice) => slice.id !== sliceId),
+      selectedSliceId: state.selectedSliceId === sliceId ? null : state.selectedSliceId,
+      statusText: "已移除一个误识别区域",
+    }));
+  },
+  clearScanPreview: () => set({ scanPreviewSlices: [], statusText: "识别预览已清空" }),
+  startPickScanBackground: () => {
+    if (!get().imageDocument) {
+      set({ statusText: "请先导入图片" });
+      return;
+    }
+
+    set({ activeTool: "scan", isPickingScanBackground: true, statusText: "点击画布取背景色" });
+  },
+  sampleScanBackgroundAt: async (x, y) => {
+    const state = get();
+    if (!state.imageDocument) {
+      return;
+    }
+
+    try {
+      const sourceImage = await loadImage(state.imageDocument.url);
+      const canvas = document.createElement("canvas");
+      canvas.width = state.imageDocument.width;
+      canvas.height = state.imageDocument.height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) {
+        throw new Error("Canvas is unavailable");
+      }
+
+      context.drawImage(sourceImage, 0, 0);
+      const pixel = context.getImageData(x, y, 1, 1).data;
+      set({
+        scanBackgroundColor: toHexColor(pixel[0], pixel[1], pixel[2]),
+        scanMode: "color",
+        isPickingScanBackground: false,
+        statusText: "背景色已取样",
+      });
+    } catch {
+      set({ errorMessage: "背景色取样失败，请重新点击画布。", statusText: "取样失败", isPickingScanBackground: false });
     }
   },
   openFile: async (file) => {
@@ -495,6 +659,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         pastSlices: [],
         futureSlices: [],
         selectedSliceId: null,
+        scanPreviewSlices: [],
+        isPickingScanBackground: false,
         pan: { x: 0, y: 0 },
         zoom: calculateFitZoom(bitmap.width, bitmap.height),
         statusText: "图片已导入",
@@ -529,8 +695,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         const file = await openImageFromDesktopDialog();
         if (file) {
           await get().openFile(file);
-          return;
         }
+        return;
       } catch {
         // Fall through to the browser file picker.
       }
@@ -573,11 +739,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         pastSlices: [],
         futureSlices: [],
         selectedSliceId: restoredSelectedId,
+        scanPreviewSlices: [],
+        isPickingScanBackground: false,
         pan: { x: 0, y: 0 },
         zoom: calculateFitZoom(bitmap.width, bitmap.height),
         pointerInfo: "坐标 0, 0",
         statusText: "项目已打开",
         exportFormat: project.settings.exportFormat,
+        exportMode: project.settings.exportMode ?? "zip",
         exportScope: project.settings.exportScope,
         targetPlatform: project.settings.targetPlatform,
         enabledWebOutputIds: project.settings.enabledWebOutputIds,
@@ -586,6 +755,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         androidResourceName: project.settings.androidResourceName,
         filePrefix: project.settings.filePrefix,
         jpgBackground: project.settings.jpgBackground,
+        exportTransparentBackground:
+          project.settings.exportTransparentBackground ?? project.settings.scanTransparentBackground ?? true,
+        defaultSliceShape: project.settings.defaultSliceShape ?? "rect",
+        defaultCornerRadius: project.settings.defaultCornerRadius ?? 12,
+        aspectRatioPreset: project.settings.aspectRatioPreset ?? "free",
         gridMode: project.settings.gridMode,
         gridWidth: project.settings.gridWidth,
         gridHeight: project.settings.gridHeight,
@@ -597,6 +771,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         gridColumns: project.settings.gridColumns,
         gridOrder: project.settings.gridOrder,
         scanMode: project.settings.scanMode,
+        scanMergeStrategy: project.settings.scanMergeStrategy ?? "nearby",
+        scanMergeDistance: project.settings.scanMergeDistance ?? 8,
+        scanBridgeGap: project.settings.scanBridgeGap ?? 1,
+        scanIgnoreText: project.settings.scanIgnoreText ?? true,
         scanAlphaThreshold: project.settings.scanAlphaThreshold,
         scanBackgroundColor: project.settings.scanBackgroundColor,
         scanColorTolerance: project.settings.scanColorTolerance,
@@ -626,6 +804,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const dataUrl = await blobUrlToDataUrl(state.imageDocument.url);
       const settings: ProjectSettings = {
         exportFormat: state.exportFormat,
+        exportMode: state.exportMode,
         exportScope: state.exportScope,
         targetPlatform: state.targetPlatform,
         enabledWebOutputIds: state.enabledWebOutputIds,
@@ -634,6 +813,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         androidResourceName: state.androidResourceName,
         filePrefix: state.filePrefix,
         jpgBackground: state.jpgBackground,
+        exportTransparentBackground: state.exportTransparentBackground,
+        defaultSliceShape: state.defaultSliceShape,
+        defaultCornerRadius: state.defaultCornerRadius,
+        aspectRatioPreset: state.aspectRatioPreset,
         gridMode: state.gridMode,
         gridWidth: state.gridWidth,
         gridHeight: state.gridHeight,
@@ -645,6 +828,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         gridColumns: state.gridColumns,
         gridOrder: state.gridOrder,
         scanMode: state.scanMode,
+        scanMergeStrategy: state.scanMergeStrategy,
+        scanMergeDistance: state.scanMergeDistance,
+        scanBridgeGap: state.scanBridgeGap,
+        scanIgnoreText: state.scanIgnoreText,
         scanAlphaThreshold: state.scanAlphaThreshold,
         scanBackgroundColor: state.scanBackgroundColor,
         scanColorTolerance: state.scanColorTolerance,
@@ -740,6 +927,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ errorMessage: "自定义预设保存失败，请稍后再试。", statusText: "预设保存失败" });
     }
   },
+  openLastExportDirectory: async () => {
+    const { lastExportDirectory } = get();
+    if (!lastExportDirectory) {
+      set({ statusText: "还没有可打开的导出目录" });
+      return;
+    }
+
+    try {
+      await openPath(lastExportDirectory);
+    } catch {
+      set({ errorMessage: "导出目录无法打开，请确认目录还存在。", statusText: "打开目录失败" });
+    }
+  },
   handleExport: async () => {
     const state = get();
     if (!state.imageDocument) {
@@ -765,18 +965,113 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         filePrefix: state.filePrefix,
         exportFormat: state.exportFormat,
         jpgBackground: state.jpgBackground,
+        exportMode: state.exportMode,
+        transparentBackground:
+          state.exportTransparentBackground ? { color: state.scanBackgroundColor, tolerance: state.scanColorTolerance } : null,
       });
 
       if (result.ok) {
-        set({ statusText: result.statusText });
+        set({ statusText: result.statusText, lastExportDirectory: result.exportDirectory ?? state.lastExportDirectory });
         return;
       }
 
       set({ errorMessage: result.errorMessage, statusText: result.statusText });
-    } catch {
-      set({ errorMessage: "导出失败，请检查图片和选区后再试。", statusText: "导出失败" });
+    } catch (error) {
+      set({
+        errorMessage: `导出失败：${getErrorMessage(error)}`,
+        statusText: "导出失败",
+      });
     } finally {
       set({ isExporting: false });
     }
   },
 }));
+
+async function trimSlices(
+  sliceIds: string[],
+  get: () => WorkspaceState,
+  set: (
+    partial:
+      | Partial<WorkspaceState>
+      | ((state: WorkspaceState) => Partial<WorkspaceState>),
+  ) => void,
+) {
+  const state = get();
+  if (!state.imageDocument) {
+    set({ statusText: "请先导入图片" });
+    return;
+  }
+
+  const candidates = state.slices.filter((slice) => sliceIds.includes(slice.id) && !slice.locked);
+  if (candidates.length === 0) {
+    set({ statusText: "没有可收紧的切片" });
+    return;
+  }
+
+  try {
+    const sourceImage = await loadImage(state.imageDocument.url);
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("Canvas is unavailable");
+    }
+
+    const updates = new Map<string, Partial<SliceRegion>>();
+    for (const slice of candidates) {
+      canvas.width = slice.width;
+      canvas.height = slice.height;
+      context.clearRect(0, 0, slice.width, slice.height);
+      context.drawImage(sourceImage, slice.x, slice.y, slice.width, slice.height, 0, 0, slice.width, slice.height);
+      const bounds = findOpaqueBounds(context.getImageData(0, 0, slice.width, slice.height), state.scanAlphaThreshold);
+
+      if (!bounds) {
+        continue;
+      }
+
+      if (bounds.x === 0 && bounds.y === 0 && bounds.width === slice.width && bounds.height === slice.height) {
+        continue;
+      }
+
+      updates.set(slice.id, {
+        x: slice.x + bounds.x,
+        y: slice.y + bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      });
+    }
+
+    if (updates.size === 0) {
+      set({ statusText: "切片已经贴合透明边" });
+      return;
+    }
+
+    state.pushHistory();
+    set((current) => ({
+      slices: current.slices.map((slice) => {
+        const patch = updates.get(slice.id);
+        return patch ? { ...slice, ...patch } : slice;
+      }),
+      statusText: `已收紧 ${updates.size} 个切片`,
+    }));
+  } catch {
+    set({ errorMessage: "透明边收紧失败，请换一张图片或重新导入后再试。", statusText: "收紧失败" });
+  }
+}
+
+function toHexColor(red: number, green: number, blue: number) {
+  return `#${[red, green, blue]
+    .map((value) => Math.max(0, Math.min(Math.round(value), 255)).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "请检查保存位置、图片和选区后再试。";
+}
