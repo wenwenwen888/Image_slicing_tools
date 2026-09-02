@@ -3,6 +3,7 @@ import { DEFAULT_CUSTOM_ICON_OUTPUTS, DEFAULT_WEB_OUTPUT_IDS, MAX_SCAN_PIXELS, M
 import { blobUrlToDataUrl, dataUrlToFile, getMimeTypeFromFileName, isAcceptedImageFile } from "../core/files";
 import { runExport } from "../core/export";
 import { calculateFitZoom, detectAlphaChannel, loadImage } from "../core/image";
+import { getInitialLanguage, LANGUAGE_STORAGE_KEY, type Language } from "../core/i18n";
 import { clamp } from "../core/geometry";
 import { buildGridSlices } from "../core/grid";
 import { sanitizeAndroidResourceName, sanitizeCustomOutputFileName, sanitizeFileName } from "../core/naming";
@@ -32,6 +33,7 @@ import { isTauriRuntime } from "../platform/runtime";
 import { openPath, saveBlob } from "../platform/save";
 
 type WorkspaceState = {
+  language: Language;
   imageDocument: ImageDocument | null;
   activeTool: ToolId;
   slices: SliceRegion[];
@@ -88,6 +90,7 @@ type WorkspaceState = {
   customIconOutputs: CustomIconOutput[];
   enabledCustomOutputIds: string[];
   setActiveTool: (tool: ToolId) => void;
+  setLanguage: (language: Language) => void;
   setIsPanning: (isPanning: boolean) => void;
   setIsDraggingOver: (isDraggingOver: boolean) => void;
   setPan: (pan: PanState) => void;
@@ -151,6 +154,7 @@ type WorkspaceState = {
   removeScanPreviewSlice: (sliceId: string) => void;
   clearScanPreview: () => void;
   startPickScanBackground: () => void;
+  startPickExportBackground: () => void;
   sampleScanBackgroundAt: (x: number, y: number) => Promise<void>;
   openFile: (file: File) => Promise<void>;
   openDroppedFile: (file: File) => Promise<void>;
@@ -180,6 +184,7 @@ function replaceImage(current: ImageDocument | null, next: ImageDocument | null)
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
+  language: getInitialLanguage(),
   imageDocument: null,
   activeTool: "select",
   slices: [],
@@ -235,6 +240,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   scanPreviewSlices: [],
   customIconOutputs: DEFAULT_CUSTOM_ICON_OUTPUTS,
   enabledCustomOutputIds: DEFAULT_CUSTOM_ICON_OUTPUTS.map((output) => output.id),
+  setLanguage: (language) => {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    set({ language });
+  },
   setActiveTool: (activeTool) => set({ activeTool }),
   setIsPanning: (isPanning) => set({ isPanning }),
   setIsDraggingOver: (isDraggingOver) => set({ isDraggingOver }),
@@ -554,12 +563,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         return;
       }
 
-      set({
-        scanPreviewSlices: nextSlices,
+      state.pushHistory();
+      set((current) => ({
+        slices: replaceExisting ? nextSlices : [...current.slices, ...nextSlices],
+        scanPreviewSlices: [],
         selectedSliceId: nextSlices[0].id,
-        activeTool: "scan",
-        statusText: `已预览 ${nextSlices.length} 个识别区域`,
-      });
+        activeTool: "select",
+        statusText: replaceExisting ? `已替换为 ${nextSlices.length} 个识别切片` : `已追加 ${nextSlices.length} 个识别切片`,
+      }));
     } catch {
       set({
         errorMessage: "智能识别失败，请换一张图片或调整参数后再试。",
@@ -600,7 +611,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return;
     }
 
-    set({ activeTool: "scan", isPickingScanBackground: true, statusText: "点击画布取背景色" });
+    set({ activeTool: "scan", scanMode: "color", isPickingScanBackground: true, statusText: "点击画布取背景色" });
+  },
+  startPickExportBackground: () => {
+    if (!get().imageDocument) {
+      set({ statusText: "请先导入图片" });
+      return;
+    }
+
+    set({ exportTransparentBackground: true, isPickingScanBackground: true, statusText: "点击画布取导出透明背景色" });
   },
   sampleScanBackgroundAt: async (x, y) => {
     const state = get();
@@ -622,7 +641,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const pixel = context.getImageData(x, y, 1, 1).data;
       set({
         scanBackgroundColor: toHexColor(pixel[0], pixel[1], pixel[2]),
-        scanMode: "color",
         isPickingScanBackground: false,
         statusText: "背景色已取样",
       });

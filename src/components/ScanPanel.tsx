@@ -1,4 +1,4 @@
-import { Pipette, Trash2 } from "lucide-react";
+import { Pipette, ScanSearch } from "lucide-react";
 import { clamp } from "../core/geometry";
 import { parseNonNegativeInt, parsePositiveInt } from "../core/numbers";
 import type { ScanMergeStrategy, ScanMode } from "../core/types";
@@ -19,7 +19,6 @@ export function ScanPanel() {
   const scanMergeDistance = useWorkspaceStore((state) => state.scanMergeDistance);
   const scanBridgeGap = useWorkspaceStore((state) => state.scanBridgeGap);
   const scanIgnoreText = useWorkspaceStore((state) => state.scanIgnoreText);
-  const scanPreviewSlices = useWorkspaceStore((state) => state.scanPreviewSlices);
   const isPickingScanBackground = useWorkspaceStore((state) => state.isPickingScanBackground);
   const setScanMode = useWorkspaceStore((state) => state.setScanMode);
   const setScanAlphaThreshold = useWorkspaceStore((state) => state.setScanAlphaThreshold);
@@ -33,9 +32,6 @@ export function ScanPanel() {
   const setScanBridgeGap = useWorkspaceStore((state) => state.setScanBridgeGap);
   const setScanIgnoreText = useWorkspaceStore((state) => state.setScanIgnoreText);
   const detectIconSlices = useWorkspaceStore((state) => state.detectIconSlices);
-  const applyScanPreview = useWorkspaceStore((state) => state.applyScanPreview);
-  const removeScanPreviewSlice = useWorkspaceStore((state) => state.removeScanPreviewSlice);
-  const clearScanPreview = useWorkspaceStore((state) => state.clearScanPreview);
   const startPickScanBackground = useWorkspaceStore((state) => state.startPickScanBackground);
 
   return (
@@ -45,9 +41,9 @@ export function ScanPanel() {
         <label className="field">
           识别方式
           <select onChange={(event) => setScanMode(event.target.value as ScanMode)} value={scanMode}>
-            <option value="auto">自动识别</option>
-            <option value="alpha">透明背景</option>
-            <option value="color">纯色背景</option>
+            <option value="auto">智能自动：复杂背景优先识别显著图形</option>
+            <option value="alpha">透明图：识别不透明区域</option>
+            <option value="color">纯色底：按指定背景色识别</option>
           </select>
         </label>
 
@@ -78,11 +74,11 @@ export function ScanPanel() {
         )}
 
       <details className="collapsible-panel">
-        <summary>识别参数</summary>
+        <summary>高级识别调节</summary>
         <div className="collapsible-body">
           {scanMode === "alpha" ? (
             <label className="field">
-              透明阈值
+              透明阈值：数值越大，越容易忽略半透明阴影
               <input
                 max={255}
                 min={0}
@@ -93,7 +89,7 @@ export function ScanPanel() {
             </label>
           ) : (
           <label className="field">
-            颜色容差
+            背景容差：数值越大，越容易把渐变背景当成背景
             <input
               max={255}
               min={0}
@@ -106,7 +102,7 @@ export function ScanPanel() {
 
           <div className="field-grid">
             <label>
-              最小面积
+              最小面积：过滤碎屑和噪点
               <input
                 min={1}
                 onChange={(event) => setScanMinArea(parsePositiveInt(event.target.value, 1))}
@@ -115,7 +111,7 @@ export function ScanPanel() {
               />
             </label>
             <label>
-              最小边长
+              最小边长：过滤太细小的装饰
               <input
                 min={1}
                 onChange={(event) => setScanMinSize(parsePositiveInt(event.target.value, 1))}
@@ -126,7 +122,7 @@ export function ScanPanel() {
           </div>
 
           <label className="field">
-            扩展边距
+            扩展边距：给识别到的图形多留一点边
             <input
               min={0}
               onChange={(event) => setScanPadding(parseNonNegativeInt(event.target.value))}
@@ -138,15 +134,15 @@ export function ScanPanel() {
           <label className="field">
             合并策略
             <select onChange={(event) => setScanMergeStrategy(event.target.value as ScanMergeStrategy)} value={scanMergeStrategy}>
-              <option value="nearby">邻近合并</option>
-              <option value="row">同行合并</option>
-              <option value="none">不合并</option>
+              <option value="nearby">邻近合并：适合一个 icon 被拆成几块</option>
+              <option value="row">同行合并：适合横向排列的小部件</option>
+              <option value="none">不合并：保留最细碎结果</option>
             </select>
           </label>
 
           <div className="field-grid">
             <label>
-              合并距离
+              合并距离：越大越容易把近处图形合在一起
               <input
                 min={0}
                 onChange={(event) => setScanMergeDistance(parseNonNegativeInt(event.target.value))}
@@ -155,7 +151,7 @@ export function ScanPanel() {
               />
             </label>
             <label>
-              桥接间隔
+              桥接间隔：连接断开的细边和高光
               <input
                 max={8}
                 min={0}
@@ -178,73 +174,22 @@ export function ScanPanel() {
         </div>
       </details>
 
-      <p className="hint-text">透明背景会识别非透明图形；纯色背景会识别与背景色差异明显的区域。</p>
+      <p className="hint-text">建议先用“智能自动”。如果图片本身透明，用透明图；如果背景很干净，用纯色底并取一次背景色。</p>
 
-      <div className="action-row">
-        <Hint fill text="按当前识别参数生成预览，不会立即改动正式切片。">
+      <div className="action-row single">
+        <Hint fill text="按当前设置识别 icon，并直接追加为正式选区。识别错的结果可以在画布或切片列表中删除。">
           <button
             className="button"
             data-testid="scan-detect-preview"
             disabled={!imageDocument || isScanning}
-            onClick={() => void detectIconSlices(true)}
+            onClick={() => void detectIconSlices(false)}
             type="button"
           >
-            生成预览
-          </button>
-        </Hint>
-        <Hint fill text="清空当前预览结果。">
-          <button
-            className="button secondary"
-            data-testid="scan-clear-preview"
-            disabled={scanPreviewSlices.length === 0}
-            onClick={clearScanPreview}
-            type="button"
-          >
-            清空预览
+            <ScanSearch size={16} />
+            {isScanning ? "识别中" : "识别并追加"}
           </button>
         </Hint>
       </div>
-
-        {scanPreviewSlices.length > 0 && (
-          <div className="scan-preview-panel">
-          <div className="scan-preview-header">
-            <strong>{scanPreviewSlices.length} 个候选区域</strong>
-            <span>可先删除误识别项</span>
-          </div>
-          <div className="scan-preview-list">
-            {scanPreviewSlices.slice(0, 8).map((slice) => (
-              <div className="scan-preview-item" data-testid="scan-preview-item" key={slice.id}>
-                <span>
-                  {slice.name} · {slice.width} x {slice.height}
-                </span>
-                <Hint text="移除这个误识别区域。">
-                  <button
-                    className="mini-button danger"
-                    data-testid="scan-remove-preview-item"
-                    onClick={() => removeScanPreviewSlice(slice.id)}
-                    type="button"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </Hint>
-              </div>
-            ))}
-            {scanPreviewSlices.length > 8 && <span className="hint-text">还有 {scanPreviewSlices.length - 8} 个候选区域</span>}
-          </div>
-          <div className="action-row">
-            <Hint fill text="用预览结果替换正式切片。">
-              <button className="button" data-testid="scan-apply-replace" onClick={() => applyScanPreview(true)} type="button">
-                替换应用
-              </button>
-            </Hint>
-            <Hint fill text="把预览结果追加到正式切片。">
-              <button className="button" data-testid="scan-apply-append" onClick={() => applyScanPreview(false)} type="button">
-                追加应用
-              </button>
-            </Hint>
-          </div>
-          </div>
-        )}
       </div>
     </details>
   );

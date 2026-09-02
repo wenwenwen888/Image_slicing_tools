@@ -657,6 +657,66 @@ button.canvas-empty-state {
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.2);
 }
 
+.settings-backdrop {
+  place-items: start end;
+}
+
+.settings-modal {
+  display: grid;
+  width: min(420px, calc(100vw - 28px));
+  gap: 10px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e1e7ef;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.settings-section h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #111827;
+  font-size: 13px;
+}
+
+.settings-hint,
+.settings-result,
+.update-card p {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-result {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.compact-info-list {
+  gap: 6px;
+}
+
+.update-card {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.update-card strong {
+  color: #1e40af;
+  font-size: 13px;
+}
+
 .modal-heading {
   display: flex;
   align-items: center;
@@ -771,6 +831,10 @@ input[type="color"] {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 8px;
+}
+
+.action-row.single {
+  grid-template-columns: 1fr;
 }
 
 .action-row .button,
@@ -986,7 +1050,7 @@ input[type="color"] {
 
 .export-file-list {
   display: grid;
-  max-height: 118px;
+  max-height: 72px;
   gap: 4px;
   overflow: auto;
 }

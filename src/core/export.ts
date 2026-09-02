@@ -9,7 +9,6 @@ import {
   type PlatformExportPlan,
 } from "./export-plan";
 import { loadImage, renderSlice, type TransparentBackgroundOptions } from "./image";
-import { isValidAndroidResourceName } from "./naming";
 import { ANDROID_ICON_OUTPUTS, IOS_ICON_OUTPUTS, WEB_ICON_OUTPUTS } from "./presets";
 import { isTauriRuntime } from "../platform/runtime";
 import { saveBlob, saveFilesToDirectory, type DirectoryExportFile } from "../platform/save";
@@ -224,23 +223,15 @@ export async function runExport(options: {
   }
 
   if (targetPlatform === "android" && enabledAndroidOutputs.length === 0) {
-    return { ok: false, errorMessage: "请至少选择一个 Android density。", statusText: "导出前检查未通过" };
+    return { ok: false, errorMessage: "请至少选择一个 Android 尺寸。", statusText: "导出前检查未通过" };
   }
 
   if (targetPlatform === "ios" && enabledIosOutputs.length === 0) {
-    return { ok: false, errorMessage: "请至少选择一个 iOS icon 尺寸。", statusText: "导出前检查未通过" };
+    return { ok: false, errorMessage: "请至少选择一个 iOS 尺寸。", statusText: "导出前检查未通过" };
   }
 
   if (targetPlatform === "custom" && enabledCustomOutputs.length === 0) {
     return { ok: false, errorMessage: "请至少启用一个自定义尺寸。", statusText: "导出前检查未通过" };
-  }
-
-  if (targetPlatform === "android" && !isValidAndroidResourceName(androidResourceName)) {
-    return {
-      ok: false,
-      errorMessage: "Android 资源名只能使用小写字母、数字和下划线，并且不能以数字开头。",
-      statusText: "导出前检查未通过",
-    };
   }
 
   const sourceImage = await loadImage(imageDocument.url);
@@ -268,7 +259,7 @@ export async function runExport(options: {
 
     return {
       ok: true,
-      statusText: getPackageStatusText("Web 资源包", exportSlices.length, result.directory),
+      statusText: getPackageStatusText("Web 切图", exportSlices.length, result.directory),
       exportDirectory: result.directory,
     };
   }
@@ -281,7 +272,7 @@ export async function runExport(options: {
 
     return {
       ok: true,
-      statusText: getPackageStatusText("Android 资源包", exportSlices.length, result.directory),
+      statusText: getPackageStatusText("Android 切图", exportSlices.length, result.directory),
       exportDirectory: result.directory,
     };
   }
@@ -294,7 +285,7 @@ export async function runExport(options: {
 
     return {
       ok: true,
-      statusText: getPackageStatusText("iOS 资源包", exportSlices.length, result.directory),
+      statusText: getPackageStatusText("iOS 切图", exportSlices.length, result.directory),
       exportDirectory: result.directory,
     };
   }

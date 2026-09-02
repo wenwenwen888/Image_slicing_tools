@@ -3,13 +3,16 @@ import { ChangeEvent, useRef } from "react";
 import appIcon from "../assets/app-icon.png";
 import { Hint } from "./Hint";
 import { ImageInfoPanel } from "./ImageInfoPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import { getExportSlices, getPlatformOutputCount } from "../core/export";
+import { translate } from "../core/i18n";
 import { ANDROID_ICON_OUTPUTS, IOS_ICON_OUTPUTS, WEB_ICON_OUTPUTS } from "../core/presets";
 import { useWorkspaceStore } from "../store/workspace-store";
 
 export function TopBar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const language = useWorkspaceStore((state) => state.language);
   const imageDocument = useWorkspaceStore((state) => state.imageDocument);
   const zoom = useWorkspaceStore((state) => state.zoom);
   const pastSlices = useWorkspaceStore((state) => state.pastSlices);
@@ -44,6 +47,7 @@ export function TopBar() {
     IOS_ICON_OUTPUTS.filter((output) => enabledIosOutputIds.includes(output.id)).length,
     customIconOutputs.filter((output) => enabledCustomOutputIds.includes(output.id)).length,
   );
+  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -62,7 +66,7 @@ export function TopBar() {
   }
 
   function confirmCloseCurrentImage() {
-    if (window.confirm("确定关闭当前图片？关闭后会清空当前图片和所有选区。")) {
+    if (window.confirm(t("confirmCloseImage"))) {
       closeCurrentImage();
     }
   }
@@ -72,12 +76,12 @@ export function TopBar() {
       <div className="brand">
         <img alt="" className="brand-mark" height={36} src={appIcon} width={36} />
         <div>
-          <h1>图片切图工具</h1>
-          <p>跨平台图片切图工作台</p>
+          <h1>{t("appTitle")}</h1>
+          <p>{t("appSubtitle")}</p>
         </div>
       </div>
 
-      <nav className="top-actions" aria-label="主要操作">
+      <nav className="top-actions" aria-label={t("appSubtitle")}>
         <input
           accept="image/png,image/jpeg,image/webp"
           className="file-input"
@@ -93,31 +97,31 @@ export function TopBar() {
           ref={projectInputRef}
           type="file"
         />
-        <Hint text="从本地选择 PNG、JPG 或 WebP 图片，开始切图。">
+        <Hint text={t("openImageHint")}>
           <button className="button primary" onClick={() => void handleOpenImageClick(fileInputRef.current)} type="button">
             <FolderOpen size={16} />
-            打开图片
+            {t("openImage")}
           </button>
         </Hint>
-        <Hint text="打开之前保存的切图项目，恢复图片、切片和导出设置。">
-          <button className="icon-button" onClick={() => projectInputRef.current?.click()} type="button" aria-label="打开项目">
+        <Hint text={t("openProjectHint")}>
+          <button className="icon-button" onClick={() => projectInputRef.current?.click()} type="button" aria-label={t("openProject")}>
             <FileUp size={16} />
           </button>
         </Hint>
-        <Hint text="把当前图片、切片和导出设置保存成项目文件，方便下次继续。">
+        <Hint text={t("saveProjectHint")}>
           <button
             className="icon-button"
             disabled={!imageDocument}
             onClick={() => void saveProjectFile()}
             type="button"
-            aria-label="保存项目"
+            aria-label={t("saveProject")}
           >
             <Save size={16} />
           </button>
         </Hint>
-        <Hint text="关闭当前图片，并清空画布和选区。">
+        <Hint text={t("closeImageHint")}>
           <button
-            aria-label="关闭当前图片"
+            aria-label={t("closeImage")}
             className="icon-button"
             data-testid="close-image-button"
             disabled={!imageDocument}
@@ -127,46 +131,47 @@ export function TopBar() {
             <XCircle size={16} />
           </button>
         </Hint>
-        <Hint text="撤销上一步切片编辑。">
-          <button className="icon-button" disabled={pastSlices.length === 0} onClick={undo} type="button" aria-label="撤销">
+        <Hint text={t("undoHint")}>
+          <button className="icon-button" disabled={pastSlices.length === 0} onClick={undo} type="button" aria-label={t("undo")}>
             <Undo2 size={16} />
           </button>
         </Hint>
-        <Hint text="重做刚刚撤销的操作。">
-          <button className="icon-button" disabled={futureSlices.length === 0} onClick={redo} type="button" aria-label="重做">
+        <Hint text={t("redoHint")}>
+          <button className="icon-button" disabled={futureSlices.length === 0} onClick={redo} type="button" aria-label={t("redo")}>
             <Redo2 size={16} />
           </button>
         </Hint>
+        <SettingsPanel />
         <span className="divider" />
         <ImageInfoPanel />
-        <Hint text="缩小画布。">
+        <Hint text={t("zoomOut")}>
           <button
             className="icon-button"
             disabled={!imageDocument}
             onClick={() => changeZoom(zoom - 0.1)}
             type="button"
-            aria-label="缩小"
+            aria-label={t("zoomOut")}
           >
             <ZoomOut size={16} />
           </button>
         </Hint>
-        <Hint text="点击后让图片适应窗口大小。">
+        <Hint text={t("fitToWindow")}>
           <button className="zoom-value" disabled={!imageDocument} onClick={fitToWindow} type="button">
             {zoomLabel}
           </button>
         </Hint>
-        <Hint text="放大画布。">
+        <Hint text={t("zoomIn")}>
           <button
             className="icon-button"
             disabled={!imageDocument}
             onClick={() => changeZoom(zoom + 0.1)}
             type="button"
-            aria-label="放大"
+            aria-label={t("zoomIn")}
           >
             <ZoomIn size={16} />
           </button>
         </Hint>
-        <Hint text="按右侧导出设置，把切片保存为图片或平台资源包。">
+        <Hint text={t("exportHint")}>
           <button
             className="button"
             data-testid="export-button"
@@ -175,7 +180,7 @@ export function TopBar() {
             type="button"
           >
             <Download size={16} />
-            {isExporting ? "导出中" : "导出"}
+            {isExporting ? t("exporting") : t("export")}
           </button>
         </Hint>
       </nav>

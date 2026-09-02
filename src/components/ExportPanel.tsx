@@ -1,7 +1,8 @@
-import { Download, FileUp, Plus, Trash2 } from "lucide-react";
+import { Download, FileUp, Pipette, Plus, Trash2 } from "lucide-react";
 import { ChangeEvent, useRef } from "react";
 import { Hint } from "./Hint";
 import { buildPreviewForExport, getExportSlices, getPlatformOutputCount } from "../core/export";
+import { translate } from "../core/i18n";
 import { parseNonNegativeInt, parsePositiveInt } from "../core/numbers";
 import { ANDROID_ICON_OUTPUTS, IOS_ICON_OUTPUTS, WEB_ICON_OUTPUTS } from "../core/presets";
 import type { ExportFormat, ExportMode, ExportScope, TargetPlatform } from "../core/types";
@@ -10,6 +11,7 @@ import { useWorkspaceStore } from "../store/workspace-store";
 
 export function ExportPanel() {
   const customPresetInputRef = useRef<HTMLInputElement>(null);
+  const language = useWorkspaceStore((state) => state.language);
   const imageDocument = useWorkspaceStore((state) => state.imageDocument);
   const errorMessage = useWorkspaceStore((state) => state.errorMessage);
   const slices = useWorkspaceStore((state) => state.slices);
@@ -28,6 +30,7 @@ export function ExportPanel() {
   const exportTransparentBackground = useWorkspaceStore((state) => state.exportTransparentBackground);
   const scanBackgroundColor = useWorkspaceStore((state) => state.scanBackgroundColor);
   const scanColorTolerance = useWorkspaceStore((state) => state.scanColorTolerance);
+  const isPickingScanBackground = useWorkspaceStore((state) => state.isPickingScanBackground);
   const customIconOutputs = useWorkspaceStore((state) => state.customIconOutputs);
   const enabledCustomOutputIds = useWorkspaceStore((state) => state.enabledCustomOutputIds);
   const isExporting = useWorkspaceStore((state) => state.isExporting);
@@ -40,7 +43,7 @@ export function ExportPanel() {
   const setExportTransparentBackground = useWorkspaceStore((state) => state.setExportTransparentBackground);
   const setScanBackgroundColor = useWorkspaceStore((state) => state.setScanBackgroundColor);
   const setScanColorTolerance = useWorkspaceStore((state) => state.setScanColorTolerance);
-  const setAndroidResourceName = useWorkspaceStore((state) => state.setAndroidResourceName);
+  const startPickExportBackground = useWorkspaceStore((state) => state.startPickExportBackground);
   const toggleWebOutput = useWorkspaceStore((state) => state.toggleWebOutput);
   const toggleAndroidOutput = useWorkspaceStore((state) => state.toggleAndroidOutput);
   const toggleIosOutput = useWorkspaceStore((state) => state.toggleIosOutput);
@@ -53,6 +56,7 @@ export function ExportPanel() {
   const openLastExportDirectory = useWorkspaceStore((state) => state.openLastExportDirectory);
   const handleExport = useWorkspaceStore((state) => state.handleExport);
   const isDesktop = isTauriRuntime();
+  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
 
   const exportSlices = getExportSlices(slices, exportScope, selectedSliceId);
   const exportPreview = buildPreviewForExport({
@@ -88,7 +92,7 @@ export function ExportPanel() {
 
   return (
     <details className="panel-section tree-panel" open>
-      <summary>导出设置</summary>
+      <summary>{t("exportSettings")}</summary>
       <div className="tree-body">
       {errorMessage && (
         <div className="error-message compact" data-testid="error-message">
@@ -103,32 +107,32 @@ export function ExportPanel() {
         type="file"
       />
       <label className="field">
-        导出范围
+        {t("exportScope")}
         <select onChange={(event) => setExportScope(event.target.value as ExportScope)} value={exportScope}>
-          <option value="enabled">全部启用切片</option>
-          <option value="selected">当前选区</option>
+          <option value="enabled">{t("allEnabledSlices")}</option>
+          <option value="selected">{t("currentSelection")}</option>
         </select>
       </label>
       <label className="field">
-        文件名前缀
+        {t("filePrefix")}
         <input onChange={(event) => setFilePrefix(event.target.value)} placeholder="slice" value={filePrefix} />
       </label>
       <label className="field">
-        目标平台
+        {t("targetPlatform")}
         <select
           data-testid="target-platform"
           onChange={(event) => setTargetPlatform(event.target.value as TargetPlatform)}
           value={targetPlatform}
         >
-          <option value="generic">通用</option>
+          <option value="generic">{t("generic")}</option>
           <option value="android">Android</option>
           <option value="ios">iOS</option>
           <option value="web">Web</option>
-          <option value="custom">自定义</option>
+          <option value="custom">{t("custom")}</option>
         </select>
       </label>
       <label className="field">
-        输出格式
+        {t("outputFormat")}
         <select
           disabled={targetPlatform !== "generic"}
           onChange={(event) => setExportFormat(event.target.value as ExportFormat)}
@@ -140,25 +144,25 @@ export function ExportPanel() {
         </select>
       </label>
       <label className="field">
-        导出方式
+        {t("exportMode")}
         <select
           disabled={!isDesktop}
           onChange={(event) => setExportMode(event.target.value as ExportMode)}
           value={isDesktop ? exportMode : "zip"}
         >
-          <option value="zip">ZIP 文件</option>
-          <option value="folder">桌面文件夹</option>
+          <option value="zip">{t("zipFile")}</option>
+          <option value="folder">{t("desktopFolder")}</option>
         </select>
       </label>
-      {!isDesktop && <div className="hint-text">网页端会自动使用 ZIP 下载；桌面端可选择直接导出到文件夹。</div>}
+      {!isDesktop && <div className="hint-text">{t("webZipHint")}</div>}
       {targetPlatform === "generic" && exportFormat === "jpg" && (
         <label className="field">
-          JPG 背景色
+          {t("jpgBackground")}
           <input onChange={(event) => setJpgBackground(event.target.value)} type="color" value={jpgBackground} />
         </label>
       )}
       <details className="collapsible-panel" open>
-        <summary>透明背景</summary>
+        <summary>{t("transparentBackground")}</summary>
         <div className="collapsible-body">
           <label className="scan-toggle">
             <input
@@ -167,11 +171,11 @@ export function ExportPanel() {
               onChange={(event) => setExportTransparentBackground(event.target.checked)}
               type="checkbox"
             />
-            导出时纯色背景转透明
+            {t("smartTransparentBackground")}
           </label>
-          <div className="field-grid">
+          <div className="color-picker-row">
             <label>
-              背景色
+              {t("backgroundColor")}
               <input
                 data-testid="export-background-color"
                 disabled={!exportTransparentBackground}
@@ -180,27 +184,39 @@ export function ExportPanel() {
                 value={scanBackgroundColor}
               />
             </label>
-            <label>
-              容差
-              <input
-                disabled={!exportTransparentBackground}
-                max={255}
-                min={0}
-                onChange={(event) => setScanColorTolerance(Math.max(0, Math.min(parseNonNegativeInt(event.target.value), 255)))}
-                type="number"
-                value={scanColorTolerance}
-              />
-            </label>
+            <Hint text={t("pickExportBackgroundHint")}>
+              <button
+                className="mini-button"
+                data-testid="export-pick-background"
+                disabled={!imageDocument || !exportTransparentBackground}
+                onClick={startPickExportBackground}
+                type="button"
+              >
+                <Pipette size={14} />
+                {isPickingScanBackground ? t("pickingColor") : t("pickColor")}
+              </button>
+            </Hint>
           </div>
-          <div className="hint-text">PNG、WebP 和平台 icon 会把接近背景色的像素转成透明；JPG 不支持透明。</div>
+          <label className="field">
+            {t("toleranceLabel")}
+            <input
+              disabled={!exportTransparentBackground}
+              max={255}
+              min={0}
+              onChange={(event) => setScanColorTolerance(Math.max(0, Math.min(parseNonNegativeInt(event.target.value), 255)))}
+              type="number"
+              value={scanColorTolerance}
+            />
+          </label>
+          <div className="hint-text">{t("transparentHint")}</div>
         </div>
       </details>
       <details className="collapsible-panel">
-        <summary>平台尺寸和预览</summary>
+        <summary>{t("platformSizesAndPreview")}</summary>
         <div className="collapsible-body">
           {targetPlatform === "web" && (
             <div className="web-preset-panel">
-              <div className="hint-text">Web 资源包固定输出 PNG，并生成 favicon、PWA 和 HTML 配置片段。</div>
+              <div className="hint-text">{t("webPresetHint")}</div>
               <div className="web-output-list">
                 {WEB_ICON_OUTPUTS.map((output) => (
                   <label className="web-output-item" key={output.id}>
@@ -220,11 +236,7 @@ export function ExportPanel() {
           )}
           {targetPlatform === "android" && (
             <div className="web-preset-panel">
-              <div className="hint-text">Android 资源包固定输出 PNG，默认放入 `res/mipmap-*` 目录。</div>
-              <label className="field">
-                资源名
-                <input onChange={(event) => setAndroidResourceName(event.target.value)} value={androidResourceName} />
-              </label>
+              <div className="hint-text">{t("androidPresetHint")}</div>
               <div className="web-output-list">
                 {ANDROID_ICON_OUTPUTS.map((output) => (
                   <label className="web-output-item" key={output.id}>
@@ -244,7 +256,7 @@ export function ExportPanel() {
           )}
           {targetPlatform === "ios" && (
             <div className="web-preset-panel">
-              <div className="hint-text">iOS 资源包固定输出 PNG，并生成 `AppIcon.appiconset/Contents.json`。</div>
+              <div className="hint-text">{t("iosPresetHint")}</div>
               <div className="web-output-list">
                 {IOS_ICON_OUTPUTS.map((output) => (
                   <label className="web-output-item" key={output.id}>
@@ -264,18 +276,18 @@ export function ExportPanel() {
           )}
           {targetPlatform === "custom" && (
             <div className="web-preset-panel">
-              <div className="hint-text">自定义资源包固定输出 PNG，适合保存项目专用尺寸或交付给不同平台。</div>
+              <div className="hint-text">{t("customPresetHint")}</div>
               <div className="action-row">
-                <Hint fill text="打开已保存的自定义尺寸预设。">
+                <Hint fill text={t("openPreset")}>
                   <button className="button" onClick={() => customPresetInputRef.current?.click()} type="button">
                     <FileUp size={16} />
-                    打开预设
+                    {t("openPreset")}
                   </button>
                 </Hint>
-                <Hint fill text="把当前自定义尺寸保存成预设文件。">
+                <Hint fill text={t("savePreset")}>
                   <button className="button" onClick={() => void saveCustomPresetFile()} type="button">
                     <Download size={16} />
-                    保存预设
+                    {t("savePreset")}
                   </button>
                 </Hint>
               </div>
@@ -288,15 +300,15 @@ export function ExportPanel() {
                         onChange={(event) => toggleCustomOutput(output.id, event.target.checked)}
                         type="checkbox"
                       />
-                      启用
+                      {t("enabled")}
                     </label>
                     <label>
-                      名称
+                      {t("name")}
                       <input onChange={(event) => updateCustomOutput(output.id, { label: event.target.value })} value={output.label} />
                     </label>
                     <div className="field-grid">
                       <label>
-                        宽
+                        {t("width")}
                         <input
                           min={1}
                           onChange={(event) => updateCustomOutput(output.id, { width: parsePositiveInt(event.target.value, 1) })}
@@ -305,7 +317,7 @@ export function ExportPanel() {
                         />
                       </label>
                       <label>
-                        高
+                        {t("height")}
                         <input
                           min={1}
                           onChange={(event) => updateCustomOutput(output.id, { height: parsePositiveInt(event.target.value, 1) })}
@@ -315,13 +327,13 @@ export function ExportPanel() {
                       </label>
                     </div>
                     <label>
-                      文件名
+                      {t("fileName")}
                       <input
                         onChange={(event) => updateCustomOutput(output.id, { fileName: event.target.value })}
                         value={output.fileName}
                       />
                     </label>
-                    <Hint text="从自定义资源包里去掉这个尺寸。">
+                    <Hint text={t("delete")}>
                       <button
                         className="mini-button danger"
                         disabled={customIconOutputs.length <= 1}
@@ -329,16 +341,16 @@ export function ExportPanel() {
                         type="button"
                       >
                         <Trash2 size={14} />
-                        删除
+                        {t("delete")}
                       </button>
                     </Hint>
                   </div>
                 ))}
               </div>
-              <Hint fill text="新增一个自定义导出尺寸。">
+              <Hint fill text={t("addSize")}>
                 <button className="button export-panel-button" onClick={addCustomOutput} type="button">
                   <Plus size={16} />
-                  添加尺寸
+                  {t("addSize")}
                 </button>
               </Hint>
             </div>
@@ -350,8 +362,10 @@ export function ExportPanel() {
                   {exportMode === "folder" && isDesktop ? exportPreview.archiveName.replace(/\.zip$/i, "") : exportPreview.archiveName}
                 </strong>
                 <span>
-                  {exportPreview.imageCount} 张图片
-                  {exportPreview.textCount > 0 ? ` + ${exportPreview.textCount} 个配置文件` : ""}
+                  {language === "zh"
+                    ? `${exportPreview.imageCount} ${t("imagesCount")}`
+                    : `${exportPreview.imageCount} ${t("imagesCount")}`}
+                  {exportPreview.textCount > 0 ? ` + ${exportPreview.textCount} ${t("configFilesCount")}` : ""}
                 </span>
               </div>
               {exportPreview.warnings.length > 0 && (
@@ -366,14 +380,18 @@ export function ExportPanel() {
                   <span key={path}>{path}</span>
                 ))}
                 {exportPreview.totalCount > exportPreview.samplePaths.length && (
-                  <span>还有 {exportPreview.totalCount - exportPreview.samplePaths.length} 个文件</span>
+                  <span>
+                    {language === "zh"
+                      ? `${t("moreFiles")} ${exportPreview.totalCount - exportPreview.samplePaths.length} ${t("files")}`
+                      : `${t("moreFiles")} ${exportPreview.totalCount - exportPreview.samplePaths.length} ${t("files")}`}
+                  </span>
                 )}
               </div>
             </div>
           )}
         </div>
       </details>
-      <Hint fill text="按当前平台和范围导出切片。没有切片或未勾选输出尺寸时不可用。">
+      <Hint fill text={t("exportHint")}>
         <button
           className="button export-panel-button"
           disabled={!imageDocument || exportSlices.length === 0 || platformOutputCount === 0 || isExporting}
@@ -382,22 +400,24 @@ export function ExportPanel() {
         >
           <Download size={16} />
           {isExporting
-            ? "正在导出"
+            ? t("exporting")
             : targetPlatform === "web"
-              ? `导出 Web 资源包`
+              ? t("exportWebSlices")
               : targetPlatform === "android"
-                ? "导出 Android 资源包"
+                ? t("exportAndroidSlices")
                 : targetPlatform === "ios"
-                  ? "导出 iOS 资源包"
+                  ? t("exportIosSlices")
                   : targetPlatform === "custom"
-                    ? "导出自定义资源包"
-                    : `导出 ${exportSlices.length} 个切片`}
+                    ? t("exportCustomPackage")
+                    : language === "zh"
+                      ? `导出 ${exportSlices.length} 个切片`
+                      : `Export ${exportSlices.length} slices`}
         </button>
       </Hint>
       {isDesktop && lastExportDirectory && (
-        <Hint fill text="打开最近一次文件夹导出的位置。">
+        <Hint fill text={t("openExportDirectory")}>
           <button className="button secondary export-panel-button" onClick={() => void openLastExportDirectory()} type="button">
-            打开导出目录
+            {t("openExportDirectory")}
           </button>
         </Hint>
       )}

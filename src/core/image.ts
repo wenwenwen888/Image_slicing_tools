@@ -110,27 +110,162 @@ function eraseBackgroundPixels(
   height: number,
   options: TransparentBackgroundOptions,
 ) {
-  const target = parseHexColor(options.color);
-  if (!target) {
-    return;
-  }
-
   const imageData = context.getImageData(0, 0, width, height);
   const pixels = imageData.data;
+  const selectedTarget = parseHexColor(options.color);
+  const edgeTarget = estimateCanvasEdgeColor(imageData);
+  const target =
+    selectedTarget && colorDistance(selectedTarget, edgeTarget) <= Math.max(options.tolerance * 2.4, 36)
+      ? selectedTarget
+      : edgeTarget;
   const tolerance = Math.max(0, Math.min(options.tolerance, 255));
+  const hardTolerance = Math.max(tolerance, 18);
+  const featherDistance = Math.max(72, tolerance * 3.5);
+  const visited = new Uint8Array(width * height);
+  const stack: number[] = [];
 
-  for (let index = 0; index < pixels.length; index += 4) {
-    const distance = Math.max(
-      Math.abs(pixels[index] - target.r),
-      Math.abs(pixels[index + 1] - target.g),
-      Math.abs(pixels[index + 2] - target.b),
-    );
-    if (distance <= tolerance) {
-      pixels[index + 3] = 0;
+  function isBackground(pixelIndex: number) {
+    const dataIndex = pixelIndex * 4;
+    if (pixels[dataIndex + 3] === 0) {
+      return true;
+    }
+
+    return getPixelDistance(pixels, dataIndex, target) <= hardTolerance;
+  }
+
+  function addSeed(pixelIndex: number) {
+    if (!visited[pixelIndex] && isBackground(pixelIndex)) {
+      visited[pixelIndex] = 1;
+      stack.push(pixelIndex);
     }
   }
 
+  for (let x = 0; x < width; x += 1) {
+    addSeed(x);
+    addSeed((height - 1) * width + x);
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    addSeed(y * width);
+    addSeed(y * width + width - 1);
+  }
+
+  while (stack.length > 0) {
+    const pixelIndex = stack.pop();
+    if (pixelIndex === undefined) {
+      continue;
+    }
+
+    const dataIndex = pixelIndex * 4;
+    pixels[dataIndex + 3] = 0;
+
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    const neighbors = [
+      x > 0 ? pixelIndex - 1 : -1,
+      x < width - 1 ? pixelIndex + 1 : -1,
+      y > 0 ? pixelIndex - width : -1,
+      y < height - 1 ? pixelIndex + width : -1,
+    ];
+
+    for (const neighborIndex of neighbors) {
+      if (neighborIndex < 0 || visited[neighborIndex] || !isBackground(neighborIndex)) {
+        continue;
+      }
+
+      visited[neighborIndex] = 1;
+      stack.push(neighborIndex);
+    }
+  }
+
+  removeEnclosedBackgroundAndFeatherEdges(pixels, target, hardTolerance, featherDistance);
+
   context.putImageData(imageData, 0, 0);
+}
+
+function removeEnclosedBackgroundAndFeatherEdges(
+  pixels: Uint8ClampedArray,
+  target: { r: number; g: number; b: number },
+  hardTolerance: number,
+  featherDistance: number,
+) {
+  const featherLimit = hardTolerance + featherDistance;
+
+  for (let dataIndex = 0; dataIndex < pixels.length; dataIndex += 4) {
+    const alpha = pixels[dataIndex + 3];
+    if (alpha === 0) {
+      continue;
+    }
+
+    const distance = getPixelDistance(pixels, dataIndex, target);
+    if (distance <= hardTolerance) {
+      pixels[dataIndex + 3] = 0;
+      continue;
+    }
+
+    if (distance <= featherLimit) {
+      const ratio = Math.max(0, Math.min((distance - hardTolerance) / featherDistance, 1));
+      const nextAlpha = Math.round(alpha * Math.pow(ratio, 1.35));
+      pixels[dataIndex + 3] = Math.min(alpha, nextAlpha);
+      if (pixels[dataIndex + 3] > 0) {
+        unmixBackgroundColor(pixels, dataIndex, target, pixels[dataIndex + 3] / 255);
+      }
+    }
+  }
+}
+
+function getPixelDistance(pixels: Uint8ClampedArray, dataIndex: number, target: { r: number; g: number; b: number }) {
+  return colorDistance({ r: pixels[dataIndex], g: pixels[dataIndex + 1], b: pixels[dataIndex + 2] }, target);
+}
+
+function unmixBackgroundColor(
+  pixels: Uint8ClampedArray,
+  dataIndex: number,
+  background: { r: number; g: number; b: number },
+  alphaRatio: number,
+) {
+  if (alphaRatio <= 0 || alphaRatio >= 1) {
+    return;
+  }
+
+  pixels[dataIndex] = clampColor((pixels[dataIndex] - background.r * (1 - alphaRatio)) / alphaRatio);
+  pixels[dataIndex + 1] = clampColor((pixels[dataIndex + 1] - background.g * (1 - alphaRatio)) / alphaRatio);
+  pixels[dataIndex + 2] = clampColor((pixels[dataIndex + 2] - background.b * (1 - alphaRatio)) / alphaRatio);
+}
+
+function clampColor(value: number) {
+  return Math.max(0, Math.min(Math.round(value), 255));
+}
+
+function estimateCanvasEdgeColor(imageData: ImageData) {
+  const { data, width, height } = imageData;
+  const samples: Array<{ r: number; g: number; b: number }> = [];
+
+  function addSample(pixelIndex: number) {
+    const dataIndex = pixelIndex * 4;
+    if (data[dataIndex + 3] === 0) {
+      return;
+    }
+
+    samples.push({ r: data[dataIndex], g: data[dataIndex + 1], b: data[dataIndex + 2] });
+  }
+
+  for (let x = 0; x < width; x += Math.max(1, Math.floor(width / 48))) {
+    addSample(x);
+    addSample((height - 1) * width + x);
+  }
+
+  for (let y = 0; y < height; y += Math.max(1, Math.floor(height / 48))) {
+    addSample(y * width);
+    addSample(y * width + width - 1);
+  }
+
+  if (samples.length === 0) {
+    return { r: 255, g: 255, b: 255 };
+  }
+
+  samples.sort((left, right) => getLuminance(left) - getLuminance(right));
+  return samples[Math.floor(samples.length / 2)];
 }
 
 function parseHexColor(color: string) {
@@ -145,6 +280,14 @@ function parseHexColor(color: string) {
     g: (value >> 8) & 255,
     b: value & 255,
   };
+}
+
+function colorDistance(left: { r: number; g: number; b: number }, right: { r: number; g: number; b: number }) {
+  return Math.max(Math.abs(left.r - right.r), Math.abs(left.g - right.g), Math.abs(left.b - right.b));
+}
+
+function getLuminance(color: { r: number; g: number; b: number }) {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
 }
 
 function applySliceClip(context: CanvasRenderingContext2D, slice: SliceRegion, width: number, height: number) {

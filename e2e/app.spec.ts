@@ -14,6 +14,32 @@ const SOLID_BACKGROUND_ICON_SHEET = createRgbaPng(180, 120, (x, y) => {
   const inIcon = x >= 62 && x < 118 && y >= 32 && y < 88;
   return inIcon ? [22, 163, 74, 255] : [245, 245, 245, 255];
 });
+const NON_WHITE_BACKGROUND_ICON = createRgbaPng(120, 120, (x, y) => {
+  const inIcon = x >= 35 && x < 86 && y >= 35 && y < 86;
+  return inIcon ? [225, 30, 38, 255] : [8, 25, 42, 255];
+});
+
+async function createClosedTextPng(page: Page) {
+  const base64 = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 180;
+    canvas.height = 90;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas unavailable");
+    }
+
+    context.fillStyle = "#000000";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#80868b";
+    context.font = "700 72px Arial";
+    context.textBaseline = "middle";
+    context.fillText("O", 44, 48);
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+
+  return Buffer.from(base64, "base64");
+}
 
 async function importImage(page: Page, name: string, buffer: Buffer) {
   await page.getByTestId("image-file-input").setInputFiles({
@@ -46,6 +72,8 @@ async function createRectSlice(page: Page, start = 0.2, end = 0.7, expectedCount
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
+  await page.evaluate(() => window.localStorage.clear());
+  await page.reload();
   await expect(page.getByRole("heading", { name: "图片切图工具" })).toBeVisible();
 });
 
@@ -56,6 +84,16 @@ test("可以导入 PNG 图片并显示在画布中", async ({ page }) => {
   await expect(page.getByText("sample.png")).toBeVisible();
   await expect(page.getByText("200 x 200")).toBeVisible();
   await expect(page.getByTestId("export-transparent-background")).toBeChecked();
+});
+
+test("可以在设置中切换为英文并查看关于信息", async ({ page }) => {
+  await page.getByRole("button", { name: "设置" }).click();
+  await expect(page.getByTestId("settings-modal")).toBeVisible();
+  await expect(page.getByText("Lam Wan")).toBeVisible();
+  await page.getByTestId("language-select").selectOption("en");
+  await expect(page.getByRole("heading", { name: "Image Slicing Tools" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Image" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
 });
 
 test("不支持的文件会给出明确提示", async ({ page }) => {
@@ -125,41 +163,32 @@ test("可以导出 Web icon 资源包", async ({ page }) => {
   expect(download.suggestedFilename()).toBe("slice_web_icons.zip");
 
   const zip = await JSZip.loadAsync(await readFile((await download.path())!));
-  expect(zip.file("web-icons/favicon-16x16.png")).toBeTruthy();
-  expect(zip.file("web-icons/favicon-32x32.png")).toBeTruthy();
-  expect(zip.file("web-icons/icon-192x192.png")).toBeTruthy();
-  expect(zip.file("web-icons/manifest-icons.json")).toBeTruthy();
-  expect(zip.file("web-icons/html-links.txt")).toBeTruthy();
-  expect(zip.file("web-icons/export-report.md")).toBeTruthy();
-
-  const manifest = JSON.parse((await zip.file("web-icons/manifest-icons.json")?.async("string")) ?? "{}");
-  expect(manifest.icons.length).toBeGreaterThan(0);
-  await expect(page.getByTestId("status-text")).toHaveText("已导出 Web 资源包：1 个切片");
+  expect(zip.file("web-icons/slice_001_slice_1_16x16.png")).toBeTruthy();
+  expect(zip.file("web-icons/slice_001_slice_1_32x32.png")).toBeTruthy();
+  expect(zip.file("web-icons/slice_001_slice_1_192x192.png")).toBeTruthy();
+  expect(zip.file("web-icons/manifest-icons.json")).toBeNull();
+  expect(zip.file("web-icons/html-links.txt")).toBeNull();
+  expect(zip.file("web-icons/export-report.md")).toBeNull();
+  await expect(page.getByTestId("status-text")).toHaveText("已导出 Web 切图：1 个切片");
 });
 
-test("智能识别默认过滤疑似文字并先生成预览", async ({ page }) => {
+test("智能识别默认过滤疑似文字并直接追加切片", async ({ page }) => {
   await importImage(page, "icons-with-text.png", TRANSPARENT_ICON_SHEET);
   await page.getByTestId("tool-scan").click();
   await page.getByTestId("scan-detect-preview").click();
 
-  await expect(page.getByTestId("scan-preview-item")).toHaveCount(2);
-  await expect(page.getByTestId("slice-list-item")).toHaveCount(0);
-
-  await page.getByTestId("scan-apply-replace").click();
   await expect(page.getByTestId("slice-list-item")).toHaveCount(2);
-  await expect(page.getByTestId("status-text")).toHaveText("已替换为 2 个识别切片");
+  await expect(page.getByTestId("status-text")).toHaveText("已追加 2 个识别切片");
 });
 
 test("打开文字识别后会保留文字候选区域", async ({ page }) => {
   await importImage(page, "icons-with-text.png", TRANSPARENT_ICON_SHEET);
   await page.getByTestId("tool-scan").click();
-  await page.getByText("识别参数").click();
+  await page.getByText("高级识别调节").click();
   await page.getByTestId("scan-include-text").check();
   await page.getByTestId("scan-detect-preview").click();
 
-  await expect(page.getByTestId("scan-preview-item")).toHaveCount(3);
-  await page.getByTestId("scan-remove-preview-item").last().click();
-  await expect(page.getByTestId("scan-preview-item")).toHaveCount(2);
+  await expect(page.getByTestId("slice-list-item")).toHaveCount(3);
 });
 
 test("可以从画布取背景色后识别纯色背景 icon", async ({ page }) => {
@@ -178,7 +207,7 @@ test("可以从画布取背景色后识别纯色背景 icon", async ({ page }) =
   await expect(page.getByTestId("status-text")).toHaveText("背景色已取样");
 
   await page.getByTestId("scan-detect-preview").click();
-  await expect(page.getByTestId("scan-preview-item")).toHaveCount(1);
+  await expect(page.getByTestId("slice-list-item")).toHaveCount(1);
 });
 
 test("可以关闭当前图片并清空画布", async ({ page }) => {
@@ -213,4 +242,100 @@ test("可以用选区右上角关闭按钮删除选区", async ({ page }) => {
   await page.getByTestId("slice-close-button").click();
   await expect(page.getByTestId("slice-list-item")).toHaveCount(0);
   await expect(page.getByTestId("status-text")).toHaveText("选区已删除");
+});
+
+test("导出透明背景可以自动处理非白色底", async ({ page }) => {
+  await importImage(page, "dark-bg-icon.png", NON_WHITE_BACKGROUND_ICON);
+  await createRectSlice(page, 0.12, 0.88);
+  const image = page.getByTestId("source-image");
+  const box = await image.boundingBox();
+  if (!box) {
+    throw new Error("source image has no bounding box");
+  }
+
+  await page.getByTestId("export-pick-background").click();
+  await page.mouse.click(box.x + 4, box.y + 4);
+  await expect(page.getByTestId("export-background-color")).toHaveValue("#08192a");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("export-button").click();
+  const download = await downloadPromise;
+  const filePath = await download.path();
+  expect(filePath).toBeTruthy();
+
+  const dataUrl = `data:image/png;base64,${(await readFile(filePath!)).toString("base64")}`;
+  const alpha = await page.evaluate(async (source) => {
+    const image = new Image();
+    image.src = source;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas unavailable");
+    }
+    context.drawImage(image, 0, 0);
+    return {
+      corner: context.getImageData(1, 1, 1, 1).data[3],
+      center: context.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1).data[3],
+    };
+  }, dataUrl);
+
+  expect(alpha.corner).toBe(0);
+  expect(alpha.center).toBe(255);
+});
+
+test("导出透明背景会清理闭合文字内孔并羽化边缘", async ({ page }) => {
+  await importImage(page, "closed-text.png", await createClosedTextPng(page));
+  await createRectSlice(page, 0.02, 0.98);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("export-button").click();
+  const download = await downloadPromise;
+  const filePath = await download.path();
+  expect(filePath).toBeTruthy();
+
+  const dataUrl = `data:image/png;base64,${(await readFile(filePath!)).toString("base64")}`;
+  const alpha = await page.evaluate(async (source) => {
+    const image = new Image();
+    image.src = source;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas unavailable");
+    }
+    context.drawImage(image, 0, 0);
+
+    function scanAlpha(left: number, top: number, width: number, height: number) {
+      const data = context.getImageData(left, top, width, height).data;
+      let min = 255;
+      let max = 0;
+      let partial = 0;
+      for (let index = 3; index < data.length; index += 4) {
+        min = Math.min(min, data[index]);
+        max = Math.max(max, data[index]);
+        if (data[index] > 0 && data[index] < 255) {
+          partial += 1;
+        }
+      }
+
+      return { min, max, partial };
+    }
+
+    return {
+      corner: context.getImageData(2, 2, 1, 1).data[3],
+      hole: scanAlpha(62, 28, 42, 32),
+      body: scanAlpha(34, 20, 42, 50),
+      edge: scanAlpha(28, 14, 60, 60),
+    };
+  }, dataUrl);
+
+  expect(alpha.corner).toBe(0);
+  expect(alpha.hole.min).toBe(0);
+  expect(alpha.body.max).toBeGreaterThan(180);
+  expect(alpha.edge.partial).toBeGreaterThan(0);
 });

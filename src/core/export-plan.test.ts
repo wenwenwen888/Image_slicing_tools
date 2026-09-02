@@ -47,82 +47,60 @@ describe("导出清单生成", () => {
     });
   });
 
-  it("单切片 Web 资源包包含多尺寸 PNG、manifest 和 HTML 片段", () => {
-    const plan = buildWebExportPlan([makeSlice()], WEB_ICON_OUTPUTS, "source.png", "site");
+  it("单切片 Web 切图只包含等比缩放后的 PNG", () => {
+    const plan = buildWebExportPlan([makeSlice({ width: 120, height: 60 })], WEB_ICON_OUTPUTS.slice(0, 2), "site");
 
     expect(plan.archiveName).toBe("site_web_icons.zip");
     expect(plan.imageFiles.map((file) => file.path)).toEqual([
-      "web-icons/favicon-16x16.png",
-      "web-icons/favicon-32x32.png",
-      "web-icons/favicon-48x48.png",
-      "web-icons/apple-touch-icon.png",
-      "web-icons/icon-192x192.png",
-      "web-icons/icon-512x512.png",
-      "web-icons/maskable-icon-512x512.png",
+      "web-icons/site_001_home_icon_16x8.png",
+      "web-icons/site_001_home_icon_32x16.png",
     ]);
-
-    const manifest = JSON.parse(plan.textFiles.find((file) => file.path === "web-icons/manifest-icons.json")?.content ?? "{}");
-    expect(manifest.icons).toEqual([
-      { src: "/icon-192x192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-      { src: "/icon-512x512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-      { src: "/maskable-icon-512x512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+    expect(plan.imageFiles.map(({ width, height }) => ({ width, height }))).toEqual([
+      { width: 16, height: 8 },
+      { width: 32, height: 16 },
     ]);
-
-    const html = plan.textFiles.find((file) => file.path === "web-icons/html-links.txt")?.content ?? "";
-    expect(html).toContain('rel="icon"');
-    expect(html).toContain('rel="apple-touch-icon"');
-    expect(plan.textFiles.some((file) => file.path === "web-icons/export-report.md")).toBe(true);
+    expect(plan.textFiles).toEqual([]);
   });
 
-  it("多切片 Web 资源包按切片分子目录且不生成站点配置片段", () => {
+  it("多切片 Web 切图按切片分子目录且不生成配置文件", () => {
     const plan = buildWebExportPlan(
       [makeSlice({ name: "one" }), makeSlice({ id: "slice-2", name: "two" })],
       WEB_ICON_OUTPUTS.slice(0, 1),
-      "source.png",
       "site",
     );
 
     expect(plan.imageFiles.map((file) => file.path)).toEqual([
-      "web-icons/one/favicon-16x16.png",
-      "web-icons/two/favicon-16x16.png",
+      "web-icons/one/site_001_one_16x16.png",
+      "web-icons/two/site_002_two_16x16.png",
     ]);
-    expect(plan.textFiles.map((file) => file.path)).toEqual(["web-icons/export-report.md"]);
+    expect(plan.textFiles).toEqual([]);
   });
 
-  it("Android 资源包写入 res/mipmap-* 并清理资源名", () => {
-    const plan = buildAndroidExportPlan([makeSlice()], ANDROID_ICON_OUTPUTS, "source.png", "app", "2 Home Icon");
+  it("Android 切图写入 res/mipmap-*，保持原比例且不生成 adaptive icon 配置", () => {
+    const plan = buildAndroidExportPlan([makeSlice({ width: 120, height: 60 })], ANDROID_ICON_OUTPUTS, "app");
 
     expect(plan.imageFiles.map((file) => file.path).slice(0, 5)).toEqual([
-      "android-res/res/mipmap-mdpi/ic_2_home_icon.png",
-      "android-res/res/mipmap-hdpi/ic_2_home_icon.png",
-      "android-res/res/mipmap-xhdpi/ic_2_home_icon.png",
-      "android-res/res/mipmap-xxhdpi/ic_2_home_icon.png",
-      "android-res/res/mipmap-xxxhdpi/ic_2_home_icon.png",
+      "android-res/res/mipmap-mdpi/app_001_home_icon_48x24.png",
+      "android-res/res/mipmap-hdpi/app_001_home_icon_72x36.png",
+      "android-res/res/mipmap-xhdpi/app_001_home_icon_96x48.png",
+      "android-res/res/mipmap-xxhdpi/app_001_home_icon_144x72.png",
+      "android-res/res/mipmap-xxxhdpi/app_001_home_icon_192x96.png",
     ]);
-    expect(plan.imageFiles.map((file) => file.path)).toContain("android-res/res/mipmap-xxxhdpi/ic_2_home_icon_foreground.png");
-    expect(plan.textFiles.map((file) => file.path)).toContain("android-res/res/mipmap-anydpi-v26/ic_launcher.xml");
-    expect(plan.textFiles.map((file) => file.path)).toContain("android-res/res/values/ic_2_home_icon_background.xml");
-    expect(plan.textFiles.find((file) => file.path === "android-res/export-report.md")?.content).toContain(
-      "Resource name: ic_2_home_icon",
-    );
+    expect(plan.textFiles).toEqual([]);
   });
 
-  it("iOS 资源包生成 AppIcon.appiconset 和 Contents.json", () => {
-    const plan = buildIosExportPlan([makeSlice()], IOS_ICON_OUTPUTS, "source.png", "app");
-    const contents = JSON.parse(
-      plan.textFiles.find((file) => file.path === "Assets.xcassets/AppIcon.appiconset/Contents.json")?.content ?? "{}",
-    );
+  it("iOS 切图保持原比例且不生成 AppIcon 配置", () => {
+    const plan = buildIosExportPlan([makeSlice({ width: 80, height: 120 })], IOS_ICON_OUTPUTS.slice(0, 2), "app");
 
-    expect(plan.imageFiles).toHaveLength(IOS_ICON_OUTPUTS.length);
-    expect(plan.imageFiles[0]?.path).toBe("Assets.xcassets/AppIcon.appiconset/iphone-notification-20@2x.png");
-    expect(contents.images).toHaveLength(IOS_ICON_OUTPUTS.length);
-    expect(contents.images[0]).toEqual({
-      filename: "iphone-notification-20@2x.png",
-      idiom: "iphone",
-      size: "20x20",
-      scale: "2x",
-    });
-    expect(contents.info).toEqual({ author: "xcode", version: 1 });
+    expect(plan.imageFiles.map((file) => file.path)).toEqual([
+      "ios-icons/app_001_home_icon_27x40.png",
+      "ios-icons/app_001_home_icon_40x60.png",
+    ]);
+    expect(plan.imageFiles.map(({ width, height }) => ({ width, height }))).toEqual([
+      { width: 27, height: 40 },
+      { width: 40, height: 60 },
+    ]);
+    expect(plan.textFiles).toEqual([]);
   });
 
   it("自定义资源包只导出启用尺寸，但预设 JSON 保留全部尺寸", () => {
@@ -142,7 +120,7 @@ describe("导出清单生成", () => {
   });
 
   it("导出预览显示文件数量、示例路径和平台警告", () => {
-    const plan = buildWebExportPlan([makeSlice({ width: 48, height: 64 })], WEB_ICON_OUTPUTS, "source.png", "site");
+    const plan = buildWebExportPlan([makeSlice({ width: 48, height: 64 })], WEB_ICON_OUTPUTS, "site");
     const warnings = buildExportWarnings(
       {
         fileName: "source.png",
@@ -161,8 +139,8 @@ describe("导出清单生成", () => {
 
     expect(preview.archiveName).toBe("site_web_icons.zip");
     expect(preview.imageCount).toBe(WEB_ICON_OUTPUTS.length);
-    expect(preview.totalCount).toBeGreaterThan(preview.imageCount);
-    expect(preview.samplePaths[0]).toBe("web-icons/favicon-16x16.png");
-    expect(preview.warnings[0]).toContain("maskable icon");
+    expect(preview.totalCount).toBe(preview.imageCount);
+    expect(preview.samplePaths[0]).toBe("web-icons/site_001_home_icon_12x16.png");
+    expect(preview.warnings).toEqual([]);
   });
 });
