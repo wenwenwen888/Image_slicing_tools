@@ -72,7 +72,7 @@ pnpm run test:e2e
 
 ## 发布 Release
 
-本项目提供 GitHub Actions 发布流程。推送 tag 后会自动构建 macOS 和 Windows 安装包，并上传到 GitHub Release。
+本项目提供 GitHub Actions 发布流程。推送 tag 后会自动构建 macOS 和 Windows 安装包，上传到 GitHub Release，并生成桌面端检查更新所需的 `latest.json`。
 
 ```bash
 git tag v0.1.2
