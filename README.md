@@ -4,7 +4,7 @@ Image Slicing Tools 是一个跨平台图片切图工具，面向 macOS、Window
 
 作者：Lam Wan
 
-当前版本：0.1.0
+当前版本：0.1.1
 
 ## 主要功能
 
@@ -75,14 +75,13 @@ pnpm run test:e2e
 本项目提供 GitHub Actions 发布流程。推送 tag 后会自动构建 macOS 和 Windows 安装包，并上传到 GitHub Release。
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-在线更新依赖 Tauri updater 签名。仓库需要配置这些 GitHub Secrets：
+在线更新依赖 Tauri updater 签名。当前私钥未设置密码，仓库只需配置这个 GitHub Secret：
 
 - `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 
 当前 updater endpoint 指向：
 
