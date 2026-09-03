@@ -7,6 +7,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { getExportSlices, getPlatformOutputCount } from "../core/export";
 import { translate } from "../core/i18n";
 import { ANDROID_ICON_OUTPUTS, IOS_ICON_OUTPUTS, WEB_ICON_OUTPUTS } from "../core/presets";
+import { isTauriRuntime } from "../platform/runtime";
 import { useWorkspaceStore } from "../store/workspace-store";
 
 export function TopBar() {
@@ -73,11 +74,14 @@ export function TopBar() {
 
   return (
     <header className="top-bar">
-      <div className="brand">
-        <img alt="" className="brand-mark" height={36} src={appIcon} width={36} />
-        <div>
-          <h1>{t("appTitle")}</h1>
-          <p>{t("appSubtitle")}</p>
+      <div className="brand-area">
+        <SettingsPanel showTrigger={!isTauriRuntime()} />
+        <div className="brand">
+          <img alt="" className="brand-mark" height={36} src={appIcon} width={36} />
+          <div>
+            <h1>{t("appTitle")}</h1>
+            <p>{t("appSubtitle")}</p>
+          </div>
         </div>
       </div>
 
@@ -141,7 +145,6 @@ export function TopBar() {
             <Redo2 size={16} />
           </button>
         </Hint>
-        <SettingsPanel />
         <span className="divider" />
         <ImageInfoPanel />
         <Hint text={t("zoomOut")}>

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::Emitter;
 
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
@@ -38,7 +39,23 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![open_path, write_binary_file])
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "settings" {
+                let _ = app.emit("open-settings", ());
+            }
+        })
         .setup(|app| {
+            let settings = MenuItem::with_id(app, "settings", "设置...", true, Some("CmdOrCtrl+,"))?;
+            let app_menu = Submenu::with_items(
+                app,
+                "图片切图工具",
+                true,
+                &[
+                    &settings,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, Some("退出"))?,
+                ],
+            )?;
             let open_image = MenuItem::with_id(app, "open_image", "打开图片...", true, None::<&str>)?;
             let save_project = MenuItem::with_id(app, "save_project", "保存项目...", true, None::<&str>)?;
             let export = MenuItem::with_id(app, "export", "导出切片...", true, None::<&str>)?;
@@ -51,8 +68,6 @@ pub fn run() {
                     &save_project,
                     &PredefinedMenuItem::separator(app)?,
                     &export,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, Some("退出"))?,
                 ],
             )?;
             let edit_menu = Submenu::with_items(
@@ -84,7 +99,7 @@ pub fn run() {
                     &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
                 ],
             )?;
-            let menu = Menu::with_items(app, &[&file_menu, &edit_menu, &view_menu, &window_menu])?;
+            let menu = Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu])?;
             app.set_menu(menu)?;
             Ok(())
         })

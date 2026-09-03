@@ -87,7 +87,10 @@ test("可以导入 PNG 图片并显示在画布中", async ({ page }) => {
 });
 
 test("可以在设置中切换为英文并查看关于信息", async ({ page }) => {
-  await page.getByRole("button", { name: "设置" }).click();
+  const settingsButton = page.getByTestId("settings-button");
+  await expect(page.locator(".brand-area").getByTestId("settings-button")).toBeVisible();
+  await expect(page.locator(".top-actions").getByTestId("settings-button")).toHaveCount(0);
+  await settingsButton.click();
   await expect(page.getByTestId("settings-modal")).toBeVisible();
   await expect(page.getByText("Lam Wan")).toBeVisible();
   await page.getByTestId("language-select").selectOption("en");

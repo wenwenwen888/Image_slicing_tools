@@ -1,22 +1,61 @@
 import { Info, Languages, RefreshCw, Settings, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { APP_AUTHOR, APP_VERSION } from "../core/app-info";
 import { translate, type Language } from "../core/i18n";
-import { checkForAppUpdate, type UpdateCheckResult } from "../platform/updater";
+import { isTauriRuntime } from "../platform/runtime";
+import {
+  checkForAppUpdate,
+  UpdateInstallError,
+  type UpdateCheckResult,
+  type UpdateInstallProgress,
+} from "../platform/updater";
 import { useWorkspaceStore } from "../store/workspace-store";
 import { Hint } from "./Hint";
 
-export function SettingsPanel() {
+type SettingsPanelProps = {
+  showTrigger?: boolean;
+};
+
+export function SettingsPanel({ showTrigger = true }: SettingsPanelProps) {
   const [open, setOpen] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [installProgress, setInstallProgress] = useState<UpdateInstallProgress | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
   const language = useWorkspaceStore((state) => state.language);
   const setLanguage = useWorkspaceStore((state) => state.setLanguage);
   const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
+  const isInstalling = installProgress !== null;
+
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("open-settings", () => setOpen(true)))
+      .then((stopListening) => {
+        if (disposed) {
+          stopListening();
+        } else {
+          unlisten = stopListening;
+        }
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   async function handleCheckUpdates() {
     setIsChecking(true);
     setUpdateResult(null);
+    setInstallError(null);
+    setInstallProgress(null);
     try {
       setUpdateResult(await checkForAppUpdate());
     } catch {
@@ -33,23 +72,63 @@ export function SettingsPanel() {
       return;
     }
 
-    await update.install();
+    setInstallError(null);
+    setInstallProgress({ phase: "downloading", downloadedBytes: 0, totalBytes: null });
+
+    try {
+      await update.install(setInstallProgress);
+    } catch (error) {
+      setInstallProgress(null);
+      if (error instanceof UpdateInstallError && error.code === "running-from-dmg") {
+        setInstallError(t("updateFromDmg"));
+        return;
+      }
+
+      const detail = error instanceof Error ? error.message : String(error);
+      setInstallError(detail ? `${t("updateInstallFailed")}: ${detail}` : t("updateInstallFailed"));
+    }
   }
+
+  const installPercent =
+    installProgress?.phase === "downloading" && installProgress.totalBytes
+      ? Math.min(100, Math.round((installProgress.downloadedBytes / installProgress.totalBytes) * 100))
+      : null;
+  const installStatus = installProgress
+    ? installProgress.phase === "downloading"
+      ? `${t("downloadingUpdate")}${installPercent === null ? "" : ` ${installPercent}%`}`
+      : installProgress.phase === "installing"
+        ? t("installingUpdate")
+        : t("restartingApp")
+    : null;
 
   return (
     <>
-      <Hint text={t("settings")}>
-        <button aria-label={t("settings")} className="icon-button" onClick={() => setOpen(true)} type="button">
-          <Settings size={16} />
-        </button>
-      </Hint>
+      {showTrigger && (
+        <Hint text={t("settings")}>
+          <button
+            aria-label={t("settings")}
+            className="icon-button"
+            data-testid="settings-button"
+            onClick={() => setOpen(true)}
+            type="button"
+          >
+            <Settings size={16} />
+          </button>
+        </Hint>
+      )}
 
       {open && (
         <div className="modal-backdrop settings-backdrop" role="presentation">
           <section aria-label={t("settingsTitle")} className="info-modal settings-modal" data-testid="settings-modal">
             <div className="modal-heading">
               <h2>{t("settingsTitle")}</h2>
-              <button aria-label={t("close")} className="icon-button" onClick={() => setOpen(false)} type="button">
+              <button
+                aria-label={t("close")}
+                className="icon-button"
+                disabled={isInstalling}
+                onClick={() => setOpen(false)}
+                type="button"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -95,7 +174,12 @@ export function SettingsPanel() {
                 {t("checkUpdates")}
               </h3>
               <p className="settings-hint">{t("checkUpdatesHint")}</p>
-              <button className="button secondary" disabled={isChecking} onClick={() => void handleCheckUpdates()} type="button">
+              <button
+                className="button secondary"
+                disabled={isChecking || isInstalling}
+                onClick={() => void handleCheckUpdates()}
+                type="button"
+              >
                 <RefreshCw size={16} />
                 {isChecking ? t("checkingUpdates") : t("checkUpdates")}
               </button>
@@ -107,8 +191,24 @@ export function SettingsPanel() {
                     {t("updateAvailable")} {updateResult.version}
                   </strong>
                   {updateResult.notes && <p>{updateResult.notes}</p>}
-                  <button className="button primary" onClick={() => void handleInstallUpdate(updateResult)} type="button">
-                    {t("installUpdate")}
+                  {installStatus && (
+                    <div className="update-progress" role="status">
+                      <progress max={100} value={installPercent ?? undefined} />
+                      <span>{installStatus}</span>
+                    </div>
+                  )}
+                  {installError && (
+                    <p className="update-error" role="alert">
+                      {installError}
+                    </p>
+                  )}
+                  <button
+                    className="button primary"
+                    disabled={isInstalling}
+                    onClick={() => void handleInstallUpdate(updateResult)}
+                    type="button"
+                  >
+                    {installStatus ?? t("installUpdate")}
                   </button>
                 </div>
               )}
