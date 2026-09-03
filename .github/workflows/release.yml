@@ -54,6 +54,10 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+      - name: Verify macOS application signature
+        if: matrix.platform == 'macos-latest'
+        run: find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -exec codesign --verify --deep --strict --verbose=2 '{}' ';'
+
   publish-update-manifest:
     needs: release
     runs-on: ubuntu-latest
