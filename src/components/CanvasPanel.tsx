@@ -353,7 +353,7 @@ export function CanvasPanel() {
         <div
           className="image-stage"
           style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
             width: imageDocument.width,
             height: imageDocument.height,
           }}

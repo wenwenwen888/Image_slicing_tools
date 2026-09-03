@@ -22,8 +22,8 @@ const NON_WHITE_BACKGROUND_ICON = createRgbaPng(120, 120, (x, y) => {
 async function createClosedTextPng(page: Page) {
   const base64 = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
-    canvas.width = 180;
-    canvas.height = 90;
+    canvas.width = 260;
+    canvas.height = 100;
     const context = canvas.getContext("2d");
     if (!context) {
       throw new Error("Canvas unavailable");
@@ -34,7 +34,7 @@ async function createClosedTextPng(page: Page) {
     context.fillStyle = "#80868b";
     context.font = "700 72px Arial";
     context.textBaseline = "middle";
-    context.fillText("O", 44, 48);
+    context.fillText("OOO", 20, 52);
     return canvas.toDataURL("image/png").split(",")[1];
   });
 
@@ -84,6 +84,17 @@ test("可以导入 PNG 图片并显示在画布中", async ({ page }) => {
   await expect(page.getByText("sample.png")).toBeVisible();
   await expect(page.getByText("200 x 200")).toBeVisible();
   await expect(page.getByTestId("export-transparent-background")).toBeChecked();
+});
+
+test("导入图片后默认居中显示", async ({ page }) => {
+  await importImage(page, "wide.png", createSolidPng(900, 180));
+  const panel = await page.getByTestId("canvas-panel").boundingBox();
+  const image = await page.getByTestId("source-image").boundingBox();
+  expect(panel).toBeTruthy();
+  expect(image).toBeTruthy();
+
+  expect(Math.abs(panel!.x + panel!.width / 2 - (image!.x + image!.width / 2))).toBeLessThanOrEqual(2);
+  expect(Math.abs(panel!.y + panel!.height / 2 - (image!.y + image!.height / 2))).toBeLessThanOrEqual(2);
 });
 
 test("可以在设置中切换为英文并查看关于信息", async ({ page }) => {
@@ -289,6 +300,48 @@ test("导出透明背景可以自动处理非白色底", async ({ page }) => {
   expect(alpha.center).toBe(255);
 });
 
+test("Android 小尺寸导出会先清理背景再缩放", async ({ page }) => {
+  await importImage(page, "dark-bg-icon.png", NON_WHITE_BACKGROUND_ICON);
+  await createRectSlice(page, 0.02, 0.98);
+  const image = page.getByTestId("source-image");
+  const box = await image.boundingBox();
+  if (!box) {
+    throw new Error("source image has no bounding box");
+  }
+
+  await page.getByTestId("export-pick-background").click();
+  await page.mouse.click(box.x + 2, box.y + 2);
+  await page.getByTestId("target-platform").selectOption("android");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("export-button").click();
+  const download = await downloadPromise;
+  const zip = await JSZip.loadAsync(await readFile((await download.path())!));
+  const mdpiPath = Object.keys(zip.files).find((path) => path.includes("mipmap-mdpi") && path.endsWith(".png"));
+  expect(mdpiPath).toBeTruthy();
+  const png = await zip.file(mdpiPath!)!.async("base64");
+
+  const alpha = await page.evaluate(async (source) => {
+    const exported = new Image();
+    exported.src = `data:image/png;base64,${source}`;
+    await exported.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = exported.width;
+    canvas.height = exported.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas unavailable");
+    }
+    context.drawImage(exported, 0, 0);
+    return {
+      corner: context.getImageData(1, 1, 1, 1).data[3],
+      center: context.getImageData(Math.floor(exported.width / 2), Math.floor(exported.height / 2), 1, 1).data[3],
+    };
+  }, png);
+
+  expect(alpha.corner).toBeLessThan(16);
+  expect(alpha.center).toBeGreaterThan(240);
+});
+
 test("导出透明背景会清理闭合文字内孔并羽化边缘", async ({ page }) => {
   await importImage(page, "closed-text.png", await createClosedTextPng(page));
   await createRectSlice(page, 0.02, 0.98);
@@ -331,9 +384,9 @@ test("导出透明背景会清理闭合文字内孔并羽化边缘", async ({ pa
 
     return {
       corner: context.getImageData(2, 2, 1, 1).data[3],
-      hole: scanAlpha(62, 28, 42, 32),
-      body: scanAlpha(34, 20, 42, 50),
-      edge: scanAlpha(28, 14, 60, 60),
+      hole: scanAlpha(40, 30, 30, 30),
+      body: scanAlpha(20, 18, 55, 60),
+      edge: scanAlpha(14, 12, 190, 70),
     };
   }, dataUrl);
 

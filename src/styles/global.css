@@ -316,7 +316,9 @@ button:disabled {
 }
 
 .image-stage {
-  position: relative;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   display: block;
   flex: 0 0 auto;
   border: 1px solid rgba(17, 24, 39, 0.18);

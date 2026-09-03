@@ -67,22 +67,22 @@ export async function renderSlice(
   outputSize?: { width: number; height: number },
   transparentBackground?: TransparentBackgroundOptions | null,
 ) {
-  const canvas = document.createElement("canvas");
-  canvas.width = outputSize?.width ?? slice.width;
-  canvas.height = outputSize?.height ?? slice.height;
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = slice.width;
+  sourceCanvas.height = slice.height;
 
-  const context = canvas.getContext("2d");
-  if (!context) {
+  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: Boolean(transparentBackground) });
+  if (!sourceContext) {
     throw new Error("Canvas is unavailable");
   }
 
   if (format === "jpg") {
-    context.fillStyle = jpgBackground;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    sourceContext.fillStyle = jpgBackground;
+    sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
   }
 
-  const didClip = applySliceClip(context, slice, canvas.width, canvas.height);
-  context.drawImage(
+  const didClip = applySliceClip(sourceContext, slice, sourceCanvas.width, sourceCanvas.height);
+  sourceContext.drawImage(
     image,
     slice.x,
     slice.y,
@@ -90,18 +90,40 @@ export async function renderSlice(
     slice.height,
     0,
     0,
-    canvas.width,
-    canvas.height,
+    sourceCanvas.width,
+    sourceCanvas.height,
   );
   if (didClip) {
-    context.restore();
+    sourceContext.restore();
   }
 
   if (format !== "jpg" && transparentBackground) {
-    eraseBackgroundPixels(context, canvas.width, canvas.height, transparentBackground);
+    eraseBackgroundPixels(sourceContext, sourceCanvas.width, sourceCanvas.height, transparentBackground);
   }
 
-  return canvasToBlob(canvas, getMimeType(format), format === "jpg" ? 0.92 : undefined);
+  const outputWidth = outputSize?.width ?? sourceCanvas.width;
+  const outputHeight = outputSize?.height ?? sourceCanvas.height;
+  if (outputWidth === sourceCanvas.width && outputHeight === sourceCanvas.height) {
+    return canvasToBlob(sourceCanvas, getMimeType(format), format === "jpg" ? 0.92 : undefined);
+  }
+
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = outputWidth;
+  outputCanvas.height = outputHeight;
+  const outputContext = outputCanvas.getContext("2d");
+  if (!outputContext) {
+    throw new Error("Canvas is unavailable");
+  }
+
+  if (format === "jpg") {
+    outputContext.fillStyle = jpgBackground;
+    outputContext.fillRect(0, 0, outputWidth, outputHeight);
+  }
+  outputContext.imageSmoothingEnabled = true;
+  outputContext.imageSmoothingQuality = "high";
+  outputContext.drawImage(sourceCanvas, 0, 0, outputWidth, outputHeight);
+
+  return canvasToBlob(outputCanvas, getMimeType(format), format === "jpg" ? 0.92 : undefined);
 }
 
 function eraseBackgroundPixels(
@@ -111,9 +133,18 @@ function eraseBackgroundPixels(
   options: TransparentBackgroundOptions,
 ) {
   const imageData = context.getImageData(0, 0, width, height);
-  const pixels = imageData.data;
+  removeBackgroundPixels(imageData.data, width, height, options);
+  context.putImageData(imageData, 0, 0);
+}
+
+export function removeBackgroundPixels(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  options: TransparentBackgroundOptions,
+) {
   const selectedTarget = parseHexColor(options.color);
-  const edgeTarget = estimateCanvasEdgeColor(imageData);
+  const edgeTarget = estimateCanvasEdgeColor({ data: pixels, width, height });
   const target =
     selectedTarget && colorDistance(selectedTarget, edgeTarget) <= Math.max(options.tolerance * 2.4, 36)
       ? selectedTarget
@@ -121,7 +152,7 @@ function eraseBackgroundPixels(
   const tolerance = Math.max(0, Math.min(options.tolerance, 255));
   const hardTolerance = Math.max(tolerance, 18);
   const featherDistance = Math.max(72, tolerance * 3.5);
-  const visited = new Uint8Array(width * height);
+  const removed = new Uint8Array(width * height);
   const stack: number[] = [];
 
   function isBackground(pixelIndex: number) {
@@ -134,8 +165,8 @@ function eraseBackgroundPixels(
   }
 
   function addSeed(pixelIndex: number) {
-    if (!visited[pixelIndex] && isBackground(pixelIndex)) {
-      visited[pixelIndex] = 1;
+    if (!removed[pixelIndex] && isBackground(pixelIndex)) {
+      removed[pixelIndex] = 1;
       stack.push(pixelIndex);
     }
   }
@@ -156,9 +187,6 @@ function eraseBackgroundPixels(
       continue;
     }
 
-    const dataIndex = pixelIndex * 4;
-    pixels[dataIndex + 3] = 0;
-
     const x = pixelIndex % width;
     const y = Math.floor(pixelIndex / width);
     const neighbors = [
@@ -169,49 +197,280 @@ function eraseBackgroundPixels(
     ];
 
     for (const neighborIndex of neighbors) {
-      if (neighborIndex < 0 || visited[neighborIndex] || !isBackground(neighborIndex)) {
+      if (neighborIndex < 0 || removed[neighborIndex] || !isBackground(neighborIndex)) {
         continue;
       }
 
-      visited[neighborIndex] = 1;
+      removed[neighborIndex] = 1;
       stack.push(neighborIndex);
     }
   }
 
-  removeEnclosedBackgroundAndFeatherEdges(pixels, target, hardTolerance, featherDistance);
+  if (isLikelyTextForeground(pixels, width, height, target, hardTolerance)) {
+    markEnclosedBackground(pixels, width, height, target, hardTolerance, removed);
+  }
 
-  context.putImageData(imageData, 0, 0);
+  featherRemovedBackground(pixels, width, height, target, hardTolerance, featherDistance, removed);
 }
 
-function removeEnclosedBackgroundAndFeatherEdges(
+function markEnclosedBackground(
   pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  target: { r: number; g: number; b: number },
+  hardTolerance: number,
+  removed: Uint8Array,
+) {
+  const visited = new Uint8Array(width * height);
+  const totalPixels = width * height;
+
+  for (let startIndex = 0; startIndex < totalPixels; startIndex += 1) {
+    if (removed[startIndex] || visited[startIndex] || !isBackgroundPixel(pixels, startIndex, target, hardTolerance)) {
+      continue;
+    }
+
+    const component: number[] = [];
+    const stack = [startIndex];
+    visited[startIndex] = 1;
+    let touchesEdge = false;
+
+    while (stack.length > 0) {
+      const pixelIndex = stack.pop();
+      if (pixelIndex === undefined) {
+        continue;
+      }
+
+      component.push(pixelIndex);
+      const x = pixelIndex % width;
+      const y = Math.floor(pixelIndex / width);
+      touchesEdge ||= x === 0 || y === 0 || x === width - 1 || y === height - 1;
+
+      const neighbors = [
+        x > 0 ? pixelIndex - 1 : -1,
+        x < width - 1 ? pixelIndex + 1 : -1,
+        y > 0 ? pixelIndex - width : -1,
+        y < height - 1 ? pixelIndex + width : -1,
+      ];
+      for (const neighbor of neighbors) {
+        if (
+          neighbor < 0 ||
+          removed[neighbor] ||
+          visited[neighbor] ||
+          !isBackgroundPixel(pixels, neighbor, target, hardTolerance)
+        ) {
+          continue;
+        }
+        visited[neighbor] = 1;
+        stack.push(neighbor);
+      }
+    }
+
+    if (!touchesEdge) {
+      for (const pixelIndex of component) {
+        removed[pixelIndex] = 1;
+      }
+    }
+  }
+}
+
+function featherRemovedBackground(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
   target: { r: number; g: number; b: number },
   hardTolerance: number,
   featherDistance: number,
+  removed: Uint8Array,
 ) {
   const featherLimit = hardTolerance + featherDistance;
+  const featherRadius = Math.max(2, Math.min(4, Math.ceil(hardTolerance / 12)));
+  const featherZone = expandMask(removed, width, height, featherRadius);
 
   for (let dataIndex = 0; dataIndex < pixels.length; dataIndex += 4) {
+    const pixelIndex = dataIndex / 4;
+    if (removed[pixelIndex]) {
+      pixels[dataIndex + 3] = 0;
+      continue;
+    }
+
     const alpha = pixels[dataIndex + 3];
     if (alpha === 0) {
       continue;
     }
 
     const distance = getPixelDistance(pixels, dataIndex, target);
-    if (distance <= hardTolerance) {
-      pixels[dataIndex + 3] = 0;
+    if (distance > featherLimit || !featherZone[pixelIndex]) {
       continue;
     }
 
-    if (distance <= featherLimit) {
-      const ratio = Math.max(0, Math.min((distance - hardTolerance) / featherDistance, 1));
-      const nextAlpha = Math.round(alpha * Math.pow(ratio, 1.35));
-      pixels[dataIndex + 3] = Math.min(alpha, nextAlpha);
-      if (pixels[dataIndex + 3] > 0) {
-        unmixBackgroundColor(pixels, dataIndex, target, pixels[dataIndex + 3] / 255);
-      }
+    const ratio = Math.max(0, Math.min((distance - hardTolerance) / featherDistance, 1));
+    const nextAlpha = Math.round(alpha * Math.pow(ratio, 1.2));
+    pixels[dataIndex + 3] = Math.min(alpha, nextAlpha);
+    if (pixels[dataIndex + 3] > 0) {
+      unmixBackgroundColor(pixels, dataIndex, target, pixels[dataIndex + 3] / 255);
     }
   }
+}
+
+function expandMask(mask: Uint8Array, width: number, height: number, radius: number) {
+  const horizontal = new Uint8Array(mask.length);
+  const expanded = new Uint8Array(mask.length);
+
+  for (let y = 0; y < height; y += 1) {
+    let active = 0;
+    for (let x = 0; x < width; x += 1) {
+      if (x === 0) {
+        for (let seedX = 0; seedX <= Math.min(width - 1, radius); seedX += 1) {
+          active += mask[y * width + seedX];
+        }
+      } else {
+        const enteringX = x + radius;
+        const leavingX = x - radius - 1;
+        if (enteringX < width) {
+          active += mask[y * width + enteringX];
+        }
+        if (leavingX >= 0) {
+          active -= mask[y * width + leavingX];
+        }
+      }
+      horizontal[y * width + x] = active > 0 ? 1 : 0;
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    let active = 0;
+    for (let y = 0; y < height; y += 1) {
+      if (y === 0) {
+        for (let seedY = 0; seedY <= Math.min(height - 1, radius); seedY += 1) {
+          active += horizontal[seedY * width + x];
+        }
+      } else {
+        const enteringY = y + radius;
+        const leavingY = y - radius - 1;
+        if (enteringY < height) {
+          active += horizontal[enteringY * width + x];
+        }
+        if (leavingY >= 0) {
+          active -= horizontal[leavingY * width + x];
+        }
+      }
+      expanded[y * width + x] = active > 0 ? 1 : 0;
+    }
+  }
+
+  return expanded;
+}
+
+function isLikelyTextForeground(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  target: { r: number; g: number; b: number },
+  hardTolerance: number,
+) {
+  const mask = new Uint8Array(width * height);
+  const foregroundTolerance = Math.max(hardTolerance * 1.5, 42);
+  for (let pixelIndex = 0; pixelIndex < mask.length; pixelIndex += 1) {
+    const dataIndex = pixelIndex * 4;
+    if (pixels[dataIndex + 3] >= 48 && getPixelDistance(pixels, dataIndex, target) > foregroundTolerance) {
+      mask[pixelIndex] = 1;
+    }
+  }
+
+  const components = collectForegroundComponents(mask, width, height).filter(
+    (component) => component.area >= Math.max(4, Math.round(width * height * 0.0004)),
+  );
+  if (components.length < 3) {
+    return false;
+  }
+
+  const totalArea = components.reduce((sum, component) => sum + component.area, 0);
+  const largestArea = Math.max(...components.map((component) => component.area));
+  if (largestArea / Math.max(totalArea, 1) > 0.68) {
+    return false;
+  }
+
+  const left = Math.min(...components.map((component) => component.left));
+  const right = Math.max(...components.map((component) => component.right));
+  const top = Math.min(...components.map((component) => component.top));
+  const bottom = Math.max(...components.map((component) => component.bottom));
+  const boundsWidth = right - left + 1;
+  const boundsHeight = bottom - top + 1;
+  if (boundsWidth / Math.max(boundsHeight, 1) < 1.45) {
+    return false;
+  }
+
+  const heights = components.map((component) => component.bottom - component.top + 1).sort((a, b) => a - b);
+  const medianHeight = heights[Math.floor(heights.length / 2)];
+  const bottoms = components.map((component) => component.bottom).sort((a, b) => a - b);
+  const medianBottom = bottoms[Math.floor(bottoms.length / 2)];
+  const aligned = components.filter((component) => {
+    const componentHeight = component.bottom - component.top + 1;
+    return (
+      componentHeight >= medianHeight * 0.45 &&
+      componentHeight <= medianHeight * 1.8 &&
+      Math.abs(component.bottom - medianBottom) <= Math.max(3, medianHeight * 0.35)
+    );
+  });
+
+  return aligned.length / components.length >= 0.65;
+}
+
+function collectForegroundComponents(mask: Uint8Array, width: number, height: number) {
+  const visited = new Uint8Array(mask.length);
+  const components: Array<{ area: number; left: number; right: number; top: number; bottom: number }> = [];
+
+  for (let startIndex = 0; startIndex < mask.length; startIndex += 1) {
+    if (!mask[startIndex] || visited[startIndex]) {
+      continue;
+    }
+
+    const stack = [startIndex];
+    visited[startIndex] = 1;
+    let area = 0;
+    let left = width;
+    let right = 0;
+    let top = height;
+    let bottom = 0;
+
+    while (stack.length > 0) {
+      const pixelIndex = stack.pop();
+      if (pixelIndex === undefined) {
+        continue;
+      }
+      const x = pixelIndex % width;
+      const y = Math.floor(pixelIndex / width);
+      area += 1;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+
+      for (let nextY = Math.max(0, y - 1); nextY <= Math.min(height - 1, y + 1); nextY += 1) {
+        for (let nextX = Math.max(0, x - 1); nextX <= Math.min(width - 1, x + 1); nextX += 1) {
+          const neighbor = nextY * width + nextX;
+          if (mask[neighbor] && !visited[neighbor]) {
+            visited[neighbor] = 1;
+            stack.push(neighbor);
+          }
+        }
+      }
+    }
+
+    components.push({ area, left, right, top, bottom });
+  }
+
+  return components;
+}
+
+function isBackgroundPixel(
+  pixels: Uint8ClampedArray,
+  pixelIndex: number,
+  target: { r: number; g: number; b: number },
+  tolerance: number,
+) {
+  const dataIndex = pixelIndex * 4;
+  return pixels[dataIndex + 3] === 0 || getPixelDistance(pixels, dataIndex, target) <= tolerance;
 }
 
 function getPixelDistance(pixels: Uint8ClampedArray, dataIndex: number, target: { r: number; g: number; b: number }) {
@@ -237,7 +496,7 @@ function clampColor(value: number) {
   return Math.max(0, Math.min(Math.round(value), 255));
 }
 
-function estimateCanvasEdgeColor(imageData: ImageData) {
+function estimateCanvasEdgeColor(imageData: { data: Uint8ClampedArray; width: number; height: number }) {
   const { data, width, height } = imageData;
   const samples: Array<{ r: number; g: number; b: number }> = [];
 
