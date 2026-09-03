@@ -1,0 +1,60 @@
+name: Repair macOS Release
+
+on:
+  push:
+    tags:
+      - "repair-macos-v*"
+
+jobs:
+  repair:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout release source
+        shell: bash
+        run: |
+          target_tag="${GITHUB_REF_NAME#repair-macos-}"
+          git checkout --detach "$target_tag"
+          echo "TARGET_TAG=$target_tag" >> "$GITHUB_ENV"
+
+      - name: Enable macOS ad-hoc signing
+        shell: bash
+        run: |
+          jq '.bundle.macOS.signingIdentity = "-"' src-tauri/tauri.conf.json > src-tauri/tauri.conf.tmp.json
+          mv src-tauri/tauri.conf.tmp.json src-tauri/tauri.conf.json
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build repaired DMG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: pnpm tauri build --bundles dmg
+
+      - name: Verify macOS application signature
+        run: find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -exec codesign --verify --deep --strict --verbose=2 '{}' ';'
+
+      - name: Replace release DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TARGET_TAG" src-tauri/target/release/bundle/dmg/*.dmg --clobber
