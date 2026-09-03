@@ -78,8 +78,12 @@ describe("桌面端在线更新", () => {
 
   it("连续检查失败时保留底层错误", async () => {
     mocks.check.mockRejectedValue("Could not fetch a valid release JSON from the remote");
+    mocks.invoke.mockRejectedValueOnce("certificate verify failed");
 
-    await expect(checkForAppUpdate()).rejects.toBe("Could not fetch a valid release JSON from the remote");
+    await expect(checkForAppUpdate()).rejects.toThrow(
+      "Could not fetch a valid release JSON from the remote\ncertificate verify failed",
+    );
     expect(mocks.check).toHaveBeenCalledTimes(3);
+    expect(mocks.invoke).toHaveBeenCalledWith("diagnose_update_connection");
   });
 });

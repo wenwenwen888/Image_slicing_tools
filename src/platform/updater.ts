@@ -52,7 +52,15 @@ async function checkWithRetry() {
     }
   }
 
-  throw lastError;
+  const { invoke } = await import("@tauri-apps/api/core");
+  let diagnostic: string;
+  try {
+    diagnostic = await invoke<string>("diagnose_update_connection");
+  } catch (diagnosticError) {
+    throw new Error(`${String(lastError)}\n${String(diagnosticError)}`);
+  }
+
+  throw new Error(`${String(lastError)}\n${diagnostic}`);
 }
 
 async function assertWritableInstallLocation() {

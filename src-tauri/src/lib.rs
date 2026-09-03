@@ -1,7 +1,44 @@
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::Emitter;
+
+const UPDATE_MANIFEST_URL: &str =
+    "https://github.com/wenwenwen888/Image_slicing_tools/releases/latest/download/latest.json";
+
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut messages = vec![error.to_string()];
+    let mut source = error.source();
+
+    while let Some(cause) = source {
+        let message = cause.to_string();
+        if !messages.iter().any(|existing| existing == &message) {
+            messages.push(message);
+        }
+        source = cause.source();
+    }
+
+    messages.join(" -> ")
+}
+
+#[tauri::command]
+async fn diagnose_update_connection() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("image-slicing-tools/update-diagnostics")
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| error_chain(&error))?;
+
+    let response = client
+        .get(UPDATE_MANIFEST_URL)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|error| error_chain(&error))?;
+
+    Ok(format!("HTTP {}", response.status()))
+}
 
 #[cfg(target_os = "macos")]
 use std::ffi::CString;
@@ -109,7 +146,8 @@ pub fn run() {
             open_path,
             write_binary_file,
             is_app_on_read_only_volume,
-            prepare_update_temp_directory
+            prepare_update_temp_directory,
+            diagnose_update_connection
         ])
         .on_menu_event(|app, event| {
             if event.id().as_ref() == "settings" {

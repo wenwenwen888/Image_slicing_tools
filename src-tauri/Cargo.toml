@@ -1,6 +1,6 @@
 [package]
 name = "image-slicing-tools"
-version = "0.1.8"
+version = "0.1.9"
 description = "Cross-platform image slicing workspace"
 authors = ["Image Slicing Tools"]
 license = ""
@@ -20,7 +20,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
