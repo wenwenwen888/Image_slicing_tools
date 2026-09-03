@@ -58,8 +58,19 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -exec codesign --verify --deep --strict --verbose=2 '{}' ';'
 
-  publish-update-manifest:
+  publish-release:
     needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"
+
+  publish-update-manifest:
+    needs: publish-release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -71,14 +82,3 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/publish-update-manifest.sh "${{ github.ref_name }}"
-
-  publish-release:
-    needs: publish-update-manifest
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Publish completed release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"
