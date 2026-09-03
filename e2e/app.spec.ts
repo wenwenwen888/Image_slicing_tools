@@ -55,6 +55,26 @@ async function importSampleImage(page: Page) {
   await importImage(page, "sample.png", SAMPLE_PNG);
 }
 
+async function dropImage(page: Page, name: string, buffer: Buffer) {
+  const dataTransfer = await page.evaluateHandle(
+    ({ fileName, base64 }) => {
+      const binary = atob(base64);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], fileName, { type: "image/png" }));
+      return transfer;
+    },
+    { fileName: name, base64: buffer.toString("base64") },
+  );
+  const canvas = page.getByTestId("canvas-panel");
+
+  await canvas.dispatchEvent("dragenter", { dataTransfer });
+  await expect(canvas).toHaveClass(/is-dragging-over/);
+  await canvas.dispatchEvent("drop", { dataTransfer });
+  await expect(page.getByTestId("source-image")).toBeVisible();
+  await expect(page.getByTestId("status-text")).toHaveText("图片已导入");
+}
+
 async function createRectSlice(page: Page, start = 0.2, end = 0.7, expectedCount = 1) {
   const image = page.getByTestId("source-image");
   const box = await image.boundingBox();
@@ -84,6 +104,12 @@ test("可以导入 PNG 图片并显示在画布中", async ({ page }) => {
   await expect(page.getByText("sample.png")).toBeVisible();
   await expect(page.getByText("200 x 200")).toBeVisible();
   await expect(page.getByTestId("export-transparent-background")).toBeChecked();
+});
+
+test("可以把图片拖入画布并导入", async ({ page }) => {
+  await dropImage(page, "dropped.png", SAMPLE_PNG);
+  await page.getByTestId("image-info-button").click();
+  await expect(page.getByText("dropped.png")).toBeVisible();
 });
 
 test("导入图片后默认居中显示", async ({ page }) => {

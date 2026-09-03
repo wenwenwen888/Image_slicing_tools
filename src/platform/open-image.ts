@@ -1,10 +1,15 @@
 import { getMimeTypeFromFileName } from "../core/files";
 
+export async function readDesktopFile(path: string) {
+  const { readFile } = await import("@tauri-apps/plugin-fs");
+  const bytes = await readFile(path);
+  const fileName = path.split(/[\\/]/).pop() ?? "file";
+  const mimeType = fileName.toLowerCase().endsWith(".json") ? "application/json" : getMimeTypeFromFileName(fileName);
+  return new File([bytes], fileName, { type: mimeType });
+}
+
 export async function openImageFromDesktopDialog() {
-  const [{ open }, { readFile }] = await Promise.all([
-    import("@tauri-apps/plugin-dialog"),
-    import("@tauri-apps/plugin-fs"),
-  ]);
+  const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
     multiple: false,
     directory: false,
@@ -20,8 +25,5 @@ export async function openImageFromDesktopDialog() {
     return null;
   }
 
-  const bytes = await readFile(selected);
-  const fileName = selected.split(/[\\/]/).pop() ?? "image";
-  const mimeType = getMimeTypeFromFileName(fileName);
-  return new File([new Blob([bytes], { type: mimeType })], fileName, { type: mimeType });
+  return readDesktopFile(selected);
 }
