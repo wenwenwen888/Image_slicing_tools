@@ -1,90 +1,119 @@
 # Image Slicing Tools
 
-Image Slicing Tools 是一个跨平台图片切图工具，面向 macOS、Windows 和网页端。它可以导入 PNG、JPG/JPEG、WebP 图片，手动绘制切片区域，智能识别图片里的 icon 或图形元素，并按通用、Android、iOS、Web、自定义尺寸导出切图。
+Image Slicing Tools 是一款面向设计、开发与内容制作场景的跨平台图片切图工具，可运行于 macOS、Windows 和现代浏览器。它提供手动选区、网格切分、图形识别、透明背景处理以及多尺寸批量导出能力，帮助用户在一个工作区内完成从图片导入到切片交付的完整流程。
 
-作者：Lam Wan
+## 功能特性
 
-当前版本：0.1.2
+- 支持导入 PNG、JPG/JPEG 和 WebP 图片，也可直接将图片拖入画布。
+- 提供矩形、圆角矩形、正方形、圆形和椭圆等手动选区工具。
+- 支持按行列或固定尺寸生成网格切片。
+- 支持智能识别图片中的 icon 与图形元素，可过滤文字、合并相邻区域并调整识别策略。
+- 支持移动、缩放、删除单个选区，以及批量移除全部选区。
+- 支持 PNG、JPG/JPEG 和 WebP 格式导出。
+- 支持通用、Android、iOS、Web 和自定义尺寸批量导出。
+- 支持纯色背景智能转透明，并对边缘残色和闭合区域进行处理。
+- 桌面端可直接选择导出目录，网页端可将结果打包为 ZIP 下载。
+- 支持中文与 English 界面切换，并提供桌面端在线更新检查。
 
-## 主要功能
+## 获取应用
 
-- 导入 PNG、JPG/JPEG、WebP 图片。
-- 支持拖入图片、点击打开图片、缩放画布、拖动画布。
-- 支持矩形、圆角矩形、正方形、圆形、椭圆选区。
-- 支持右键删除选区、选区右上角快速关闭、移除所有选区。
-- 支持网格切图，可按固定尺寸或行列均分生成切片。
-- 支持智能识别 icon，并可过滤文字、合并相近区域、调节识别参数。
-- 支持导出透明背景，自动识别纯色背景并处理边缘残留。
-- 支持通用导出 PNG/JPG/WebP。
-- 支持 Android、iOS、Web 平台尺寸切图，按目标尺寸框等比缩放，保留原比例。
-- 支持自定义导出尺寸和预设文件。
-- 桌面端支持直接导出到文件夹。
-- 设置里支持中文 / English 切换、关于信息、检查更新。
+可前往 [GitHub Releases](https://github.com/wenwenwen888/Image_slicing_tools/releases/latest) 获取最新桌面版本：
 
-## 使用方式
+- macOS：适用于 Apple Silicon 设备的 DMG 安装包。
+- Windows：适用于 64 位 Windows 的安装程序。
+- Web：可按照下方开发指南在本地浏览器中运行。
 
-1. 点击“打开图片”，或把图片拖入画布。
-2. 在左侧选择矩形、圆角、圆形、网格或识别工具。
-3. 创建或识别切片后，可以在画布上拖动、缩放、删除选区。
-4. 在右侧“导出设置”里选择导出范围、目标平台、格式和透明背景选项。
-5. 点击“导出”，网页端会下载 ZIP，桌面端可选择 ZIP 或直接导出到文件夹。
+## 快速上手
 
-## 平台尺寸导出说明
+1. 点击“打开图片”，或将图片拖入画布区域。
+2. 从左侧工具栏选择形状、网格或智能识别工具。
+3. 在画布中创建切片，并按需调整选区的位置和大小。
+4. 在右侧导出设置中选择导出范围、格式、目标尺寸和透明背景选项。
+5. 点击导出。桌面端可保存到指定目录，网页端会下载 ZIP 文件。
 
-Android、iOS、Web 的尺寸导出用于普通 icon / 图片切图，不是应用启动图标生成器。
+## 技术架构
 
-- 不会强制把图片压成 1:1。
-- 会按目标尺寸框等比缩放，保留原始比例。
-- 文件名沿用通用命名规则，并附加实际导出尺寸。
-- 不会导出 AppIcon、manifest、XML、export-report.md 等配置文件。
+| 模块 | 技术 | 用途 |
+| --- | --- | --- |
+| 用户界面 | React 19、TypeScript | 构建编辑器界面与交互组件 |
+| 构建工具 | Vite 7 | 本地开发与前端产物构建 |
+| 桌面运行时 | Tauri 2、Rust | macOS 与 Windows 原生应用封装 |
+| 状态管理 | Zustand | 管理图片、选区和导出配置 |
+| 文件导出 | Canvas API、JSZip | 图片处理与 ZIP 文件生成 |
+| 自动化测试 | Vitest、Playwright | 核心逻辑测试与端到端验证 |
 
-## 开发
+所有图片处理均在本地完成，项目不依赖远程图片处理服务。
+
+## 本地开发
+
+### 环境要求
+
+- Node.js 22 或更高版本
+- pnpm 11 或更高版本
+- Rust stable，仅桌面端开发和构建需要
+
+安装依赖：
 
 ```bash
 pnpm install
+```
+
+启动 Web 开发环境：
+
+```bash
 pnpm run dev
 ```
 
-启动 macOS / Windows 桌面端开发模式：
+默认访问地址为 `http://localhost:5173`。
+
+启动桌面端开发环境：
 
 ```bash
 pnpm run desktop:dev
 ```
 
-构建前端：
+## 项目结构
+
+```text
+src/
+├── app/          应用入口与整体布局
+├── components/   画布、工具栏、配置面板等界面组件
+├── core/         识别、切片、图像处理与导出逻辑
+├── platform/     Web 与桌面端平台能力适配
+├── store/        工作区状态管理
+└── styles/       全局样式
+
+src-tauri/        Tauri 桌面端配置与 Rust 代码
+scripts/          本地开发、构建与辅助脚本
+e2e/              Playwright 端到端测试
+```
+
+## 测试
+
+运行核心逻辑测试：
+
+```bash
+pnpm run test
+```
+
+运行端到端测试：
+
+```bash
+pnpm run test:e2e
+```
+
+## 构建
+
+构建 Web 版本：
 
 ```bash
 pnpm run build
 ```
 
-构建桌面安装包：
+构建当前系统对应的桌面安装包：
 
 ```bash
 pnpm run desktop:build
 ```
 
-## 测试
-
-```bash
-pnpm run test
-pnpm run test:e2e
-```
-
-## 发布 Release
-
-本项目提供 GitHub Actions 发布流程。推送 tag 后会自动构建 macOS 和 Windows 安装包，上传到 GitHub Release，并生成桌面端检查更新所需的 `latest.json`。
-
-```bash
-git tag v0.1.2
-git push origin v0.1.2
-```
-
-在线更新依赖 Tauri updater 签名。当前私钥未设置密码，仓库只需配置这个 GitHub Secret：
-
-- `TAURI_SIGNING_PRIVATE_KEY`
-
-当前 updater endpoint 指向：
-
-```text
-https://github.com/wenwenwen888/Image_slicing_tools/releases/latest/download/latest.json
-```
+构建产物位于 `dist/` 和 `src-tauri/target/release/bundle/` 目录。
