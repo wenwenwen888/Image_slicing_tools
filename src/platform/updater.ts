@@ -23,6 +23,38 @@ export type UpdateCheckResult =
       install: (onProgress?: (progress: UpdateInstallProgress) => void) => Promise<void>;
     };
 
+const UPDATE_CHECK_DELAYS = [0, 800, 2_000];
+
+function wait(delay: number) {
+  return new Promise<void>((resolve) => globalThis.setTimeout(resolve, delay));
+}
+
+async function checkWithRetry() {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  let lastError: unknown;
+
+  for (const delay of UPDATE_CHECK_DELAYS) {
+    if (delay > 0) {
+      await wait(delay);
+    }
+
+    try {
+      return await check({
+        timeout: 30_000,
+        headers: {
+          Accept: "application/json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
 async function assertWritableInstallLocation() {
   const { invoke } = await import("@tauri-apps/api/core");
   const isOnReadOnlyVolume = await invoke<boolean>("is_app_on_read_only_volume");
@@ -42,8 +74,7 @@ export async function checkForAppUpdate(): Promise<UpdateCheckResult> {
     return { status: "desktop-only" };
   }
 
-  const { check } = await import("@tauri-apps/plugin-updater");
-  const update = await check({ timeout: 30_000 });
+  const update = await checkWithRetry();
   if (!update) {
     return { status: "latest" };
   }

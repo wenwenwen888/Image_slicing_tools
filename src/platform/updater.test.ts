@@ -58,4 +58,28 @@ describe("桌面端在线更新", () => {
     expect(mocks.invoke).not.toHaveBeenCalledWith("prepare_update_temp_directory");
     expect(mocks.relaunch).not.toHaveBeenCalled();
   });
+
+  it("检查请求禁用缓存，临时失败后会自动重试", async () => {
+    mocks.check.mockRejectedValueOnce("temporary 404").mockRejectedValueOnce("network timeout");
+
+    const result = await checkForAppUpdate();
+
+    expect(result.status).toBe("available");
+    expect(mocks.check).toHaveBeenCalledTimes(3);
+    expect(mocks.check).toHaveBeenLastCalledWith({
+      timeout: 30_000,
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
+    });
+  });
+
+  it("连续检查失败时保留底层错误", async () => {
+    mocks.check.mockRejectedValue("Could not fetch a valid release JSON from the remote");
+
+    await expect(checkForAppUpdate()).rejects.toBe("Could not fetch a valid release JSON from the remote");
+    expect(mocks.check).toHaveBeenCalledTimes(3);
+  });
 });

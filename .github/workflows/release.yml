@@ -50,7 +50,7 @@ jobs:
           releaseName: Image Slicing Tools ${{ github.ref_name }}
           releaseBody: |
             Desktop installers for Image Slicing Tools.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
 
@@ -71,3 +71,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/publish-update-manifest.sh "${{ github.ref_name }}"
+
+  publish-release:
+    needs: publish-update-manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"

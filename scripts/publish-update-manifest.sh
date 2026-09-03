@@ -16,7 +16,7 @@ temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
 release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}")"
-published_at="$(jq -r '.published_at' <<< "$release_json")"
+published_at="$(jq -r '.published_at // .created_at' <<< "$release_json")"
 mac_url="$(jq -r '.assets[] | select(.name | endswith(".app.tar.gz")) | .browser_download_url' <<< "$release_json")"
 windows_url="$(jq -r '.assets[] | select(.name | endswith("setup.exe")) | .browser_download_url' <<< "$release_json")"
 

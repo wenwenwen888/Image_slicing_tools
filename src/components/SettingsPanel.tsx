@@ -58,9 +58,10 @@ export function SettingsPanel({ showTrigger = true }: SettingsPanelProps) {
     setInstallProgress(null);
     try {
       setUpdateResult(await checkForAppUpdate());
-    } catch {
+    } catch (error) {
       setUpdateResult(null);
-      window.alert(t("updateFailed"));
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(detail && detail !== "[object Object]" ? `${t("updateFailed")}\n\n${detail}` : t("updateFailed"));
     } finally {
       setIsChecking(false);
     }
