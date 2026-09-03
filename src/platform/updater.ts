@@ -24,10 +24,10 @@ export type UpdateCheckResult =
     };
 
 async function assertWritableInstallLocation() {
-  const { resourceDir } = await import("@tauri-apps/api/path");
-  const applicationResourceDirectory = await resourceDir();
+  const { invoke } = await import("@tauri-apps/api/core");
+  const isOnReadOnlyVolume = await invoke<boolean>("is_app_on_read_only_volume");
 
-  if (applicationResourceDirectory.startsWith("/Volumes/")) {
+  if (isOnReadOnlyVolume) {
     throw new UpdateInstallError(
       "running-from-dmg",
       "The app is running from a mounted disk image and cannot update itself.",
