@@ -33,6 +33,8 @@ async function assertWritableInstallLocation() {
       "The app is running from a mounted disk image and cannot update itself.",
     );
   }
+
+  await invoke("prepare_update_temp_directory");
 }
 
 export async function checkForAppUpdate(): Promise<UpdateCheckResult> {

@@ -7,6 +7,8 @@ use tauri::Emitter;
 use std::ffi::CString;
 #[cfg(target_os = "macos")]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::MetadataExt;
 
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
@@ -57,6 +59,46 @@ fn is_app_on_read_only_volume() -> Result<bool, String> {
     Ok(false)
 }
 
+#[tauri::command]
+fn prepare_update_temp_directory() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let system_temp = std::env::temp_dir();
+        let executable_device = fs::metadata(&executable)
+            .map_err(|error| error.to_string())?
+            .dev();
+        let temp_device = fs::metadata(&system_temp)
+            .map_err(|error| error.to_string())?
+            .dev();
+
+        if executable_device == temp_device {
+            return Ok(());
+        }
+
+        let app_bundle = executable
+            .ancestors()
+            .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+            .ok_or_else(|| "Unable to locate the macOS application bundle.".to_string())?;
+        let app_parent = app_bundle
+            .parent()
+            .ok_or_else(|| "Unable to locate the application directory.".to_string())?;
+        let update_temp = app_parent.join(".image-slicing-tools-updater");
+        fs::create_dir_all(&update_temp).map_err(|error| error.to_string())?;
+
+        if let Err(existing) = tempfile::env::override_temp_dir(&update_temp) {
+            let existing_device = fs::metadata(&existing)
+                .map_err(|error| error.to_string())?
+                .dev();
+            if existing_device != executable_device {
+                return Err("Unable to place update files on the application volume.".to_string());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -66,7 +108,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_path,
             write_binary_file,
-            is_app_on_read_only_volume
+            is_app_on_read_only_volume,
+            prepare_update_temp_directory
         ])
         .on_menu_event(|app, event| {
             if event.id().as_ref() == "settings" {

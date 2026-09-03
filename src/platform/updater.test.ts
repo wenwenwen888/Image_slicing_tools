@@ -37,6 +37,7 @@ describe("桌面端在线更新", () => {
     await result.install();
 
     expect(mocks.invoke).toHaveBeenCalledWith("is_app_on_read_only_volume");
+    expect(mocks.invoke).toHaveBeenCalledWith("prepare_update_temp_directory");
     expect(mocks.downloadAndInstall).toHaveBeenCalledOnce();
     expect(mocks.relaunch).toHaveBeenCalledOnce();
   });
@@ -54,6 +55,7 @@ describe("桌面端在线更新", () => {
       code: "running-from-dmg",
     });
     expect(mocks.downloadAndInstall).not.toHaveBeenCalled();
+    expect(mocks.invoke).not.toHaveBeenCalledWith("prepare_update_temp_directory");
     expect(mocks.relaunch).not.toHaveBeenCalled();
   });
 });
