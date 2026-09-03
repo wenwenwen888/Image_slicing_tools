@@ -20,8 +20,11 @@ jobs:
       - name: Checkout release source
         shell: bash
         run: |
+          source_commit="$GITHUB_SHA"
           target_tag="${GITHUB_REF_NAME#repair-macos-}"
+          target_tag="${target_tag%%-r*}"
           git checkout --detach "$target_tag"
+          git cherry-pick "$source_commit"
           echo "TARGET_TAG=$target_tag" >> "$GITHUB_ENV"
 
       - name: Enable macOS ad-hoc signing
