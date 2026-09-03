@@ -15,8 +15,13 @@ jobs:
         include:
           - platform: macos-latest
             args: ""
+            verify_macos: true
+          - platform: macos-15-intel
+            args: ""
+            verify_macos: true
           - platform: windows-latest
             args: "--bundles nsis"
+            verify_macos: false
 
     runs-on: ${{ matrix.platform }}
 
@@ -55,7 +60,7 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Verify macOS application signature
-        if: matrix.platform == 'macos-latest'
+        if: matrix.verify_macos
         run: find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -exec codesign --verify --deep --strict --verbose=2 '{}' ';'
 
   publish-release:
