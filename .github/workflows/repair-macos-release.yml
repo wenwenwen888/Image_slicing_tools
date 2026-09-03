@@ -17,11 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout release source
+      - name: Resolve release target
         shell: bash
         run: |
           target_tag="${GITHUB_REF_NAME#repair-macos-}"
-          git checkout --detach "$target_tag"
+          target_tag="${target_tag%%-r*}"
           echo "TARGET_TAG=$target_tag" >> "$GITHUB_ENV"
 
       - name: Enable macOS ad-hoc signing
