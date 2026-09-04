@@ -2,8 +2,10 @@ import { create } from "zustand";
 import { DEFAULT_CUSTOM_ICON_OUTPUTS, DEFAULT_WEB_OUTPUT_IDS, MAX_SCAN_PIXELS, MAX_ZOOM, MIN_ZOOM } from "../core/constants";
 import { blobUrlToDataUrl, dataUrlToFile, getMimeTypeFromFileName, isAcceptedImageFile } from "../core/files";
 import { runExport } from "../core/export";
-import { calculateFitZoom, detectAlphaChannel, loadImage } from "../core/image";
+import { detectForegroundOverlays, reconstructLargeOverlay } from "../core/background-cleanup";
+import { calculateFitZoom, canvasToBlob, detectAlphaChannel, loadImage } from "../core/image";
 import { getInitialLanguage, LANGUAGE_STORAGE_KEY, type Language } from "../core/i18n";
+import { inpaintRegion } from "../core/inpaint";
 import { clamp } from "../core/geometry";
 import { buildGridSlices } from "../core/grid";
 import { sanitizeAndroidResourceName, sanitizeCustomOutputFileName, sanitizeFileName } from "../core/naming";
@@ -20,6 +22,8 @@ import type {
   GridMode,
   GridOrder,
   ImageDocument,
+  ImagePoint,
+  ImageRegion,
   PanState,
   ScanMergeStrategy,
   ScanMode,
@@ -32,13 +36,25 @@ import { openImageFromDesktopDialog } from "../platform/open-image";
 import { isTauriRuntime } from "../platform/runtime";
 import { openPath, saveBlob } from "../platform/save";
 
+type HistoryKind = "slices" | "image";
+
+type ImageSnapshot = {
+  document: Omit<ImageDocument, "url">;
+  blob: Blob;
+};
+
 type WorkspaceState = {
   language: Language;
   imageDocument: ImageDocument | null;
+  imageBlob: Blob | null;
   activeTool: ToolId;
   slices: SliceRegion[];
   pastSlices: SliceRegion[][];
   futureSlices: SliceRegion[][];
+  pastImages: ImageSnapshot[];
+  futureImages: ImageSnapshot[];
+  undoHistory: HistoryKind[];
+  redoHistory: HistoryKind[];
   selectedSliceId: string | null;
   zoom: number;
   pan: PanState;
@@ -87,6 +103,11 @@ type WorkspaceState = {
   isScanning: boolean;
   isPickingScanBackground: boolean;
   scanPreviewSlices: SliceRegion[];
+  brushColor: string;
+  brushSize: number;
+  isPickingBrushColor: boolean;
+  smartEraseSelection: ImageRegion | null;
+  isApplyingImageEdit: boolean;
   customIconOutputs: CustomIconOutput[];
   enabledCustomOutputIds: string[];
   setActiveTool: (tool: ToolId) => void;
@@ -129,6 +150,16 @@ type WorkspaceState = {
   setScanMinArea: (scanMinArea: number) => void;
   setScanMinSize: (scanMinSize: number) => void;
   setScanPadding: (scanPadding: number) => void;
+  setBrushColor: (brushColor: string) => void;
+  setBrushSize: (brushSize: number) => void;
+  startPickBrushColor: () => void;
+  sampleBrushColorAt: (x: number, y: number) => Promise<void>;
+  setSmartEraseSelection: (selection: ImageRegion | null) => void;
+  applyBrushStroke: (points: ImagePoint[]) => Promise<void>;
+  smartEraseRegion: (region: ImageRegion) => Promise<void>;
+  smartEraseSlice: (sliceId: string) => Promise<void>;
+  applySmartEraseSelection: () => Promise<void>;
+  clearForegroundElements: () => Promise<void>;
   changeZoom: (nextZoom: number) => void;
   fitToWindow: () => void;
   pushHistory: () => void;
@@ -165,6 +196,7 @@ type WorkspaceState = {
   saveCustomPresetFile: () => Promise<void>;
   openLastExportDirectory: () => Promise<void>;
   handleExport: () => Promise<void>;
+  handleExportSlice: (sliceId: string) => Promise<void>;
 };
 
 function toggleId(current: string[], id: string, enabled: boolean) {
@@ -183,13 +215,34 @@ function replaceImage(current: ImageDocument | null, next: ImageDocument | null)
   return next;
 }
 
+function createImageSnapshot(imageDocument: ImageDocument | null, blob: Blob | null): ImageSnapshot | null {
+  if (!imageDocument || !blob) {
+    return null;
+  }
+
+  const { url: _url, ...document } = imageDocument;
+  return { document, blob };
+}
+
+function restoreImageSnapshot(current: ImageDocument | null, snapshot: ImageSnapshot) {
+  return replaceImage(current, {
+    ...snapshot.document,
+    url: URL.createObjectURL(snapshot.blob),
+  });
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   language: getInitialLanguage(),
   imageDocument: null,
+  imageBlob: null,
   activeTool: "select",
   slices: [],
   pastSlices: [],
   futureSlices: [],
+  pastImages: [],
+  futureImages: [],
+  undoHistory: [],
+  redoHistory: [],
   selectedSliceId: null,
   zoom: 1,
   pan: { x: 0, y: 0 },
@@ -238,13 +291,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   isScanning: false,
   isPickingScanBackground: false,
   scanPreviewSlices: [],
+  brushColor: "#111827",
+  brushSize: 18,
+  isPickingBrushColor: false,
+  smartEraseSelection: null,
+  isApplyingImageEdit: false,
   customIconOutputs: DEFAULT_CUSTOM_ICON_OUTPUTS,
   enabledCustomOutputIds: DEFAULT_CUSTOM_ICON_OUTPUTS.map((output) => output.id),
   setLanguage: (language) => {
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
     set({ language });
   },
-  setActiveTool: (activeTool) => set({ activeTool }),
+  setActiveTool: (activeTool) =>
+    set({
+      activeTool,
+      isPickingBrushColor: false,
+      smartEraseSelection: activeTool === "smart-erase" ? get().smartEraseSelection : null,
+    }),
   setIsPanning: (isPanning) => set({ isPanning }),
   setIsDraggingOver: (isDraggingOver) => set({ isDraggingOver }),
   setPan: (pan) => set({ pan }),
@@ -283,6 +346,128 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setScanMinArea: (scanMinArea) => set({ scanMinArea }),
   setScanMinSize: (scanMinSize) => set({ scanMinSize }),
   setScanPadding: (scanPadding) => set({ scanPadding }),
+  setBrushColor: (brushColor) => set({ brushColor }),
+  setBrushSize: (brushSize) => set({ brushSize: clamp(Math.round(brushSize), 1, 240) }),
+  startPickBrushColor: () => {
+    if (!get().imageDocument) {
+      set({ statusText: "请先导入图片" });
+      return;
+    }
+
+    set({ activeTool: "brush", isPickingBrushColor: true, statusText: "点击画布吸取画笔颜色" });
+  },
+  sampleBrushColorAt: async (x, y) => {
+    const state = get();
+    if (!state.imageDocument) {
+      return;
+    }
+
+    try {
+      const sourceImage = await loadImage(state.imageDocument.url);
+      const canvas = document.createElement("canvas");
+      canvas.width = state.imageDocument.width;
+      canvas.height = state.imageDocument.height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) {
+        throw new Error("Canvas is unavailable");
+      }
+
+      context.drawImage(sourceImage, 0, 0);
+      const pixel = context.getImageData(x, y, 1, 1).data;
+      set({ brushColor: toHexColor(pixel[0], pixel[1], pixel[2]), isPickingBrushColor: false, statusText: "画笔颜色已吸取" });
+    } catch {
+      set({ errorMessage: "画笔取色失败，请重新点击画布。", statusText: "取色失败", isPickingBrushColor: false });
+    }
+  },
+  setSmartEraseSelection: (smartEraseSelection) => set({ smartEraseSelection }),
+  applyBrushStroke: async (points) => {
+    if (points.length === 0) {
+      return;
+    }
+
+    const { brushColor, brushSize } = get();
+    await mutateCurrentImage(
+      get,
+      set,
+      (context) => {
+        context.save();
+        context.strokeStyle = brushColor;
+        context.fillStyle = brushColor;
+        context.lineWidth = brushSize;
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        if (points.length === 1) {
+          context.beginPath();
+          context.arc(points[0].x, points[0].y, brushSize / 2, 0, Math.PI * 2);
+          context.fill();
+        } else {
+          context.beginPath();
+          context.moveTo(points[0].x, points[0].y);
+          points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+          context.stroke();
+        }
+        context.restore();
+      },
+      "正在应用画笔",
+      "画笔涂抹已应用",
+    );
+  },
+  smartEraseRegion: async (region) => {
+    await mutateCurrentImage(
+      get,
+      set,
+      (context, imageDocument) => {
+        const imageData = context.getImageData(0, 0, imageDocument.width, imageDocument.height);
+        context.putImageData(inpaintRegion(imageData, region), 0, 0);
+      },
+      "正在智能补全背景",
+      "智能消除已完成",
+    );
+  },
+  smartEraseSlice: async (sliceId) => {
+    const slice = get().slices.find((candidate) => candidate.id === sliceId);
+    if (!slice) {
+      set({ statusText: "选区不存在" });
+      return;
+    }
+
+    await get().smartEraseRegion(slice);
+  },
+  applySmartEraseSelection: async () => {
+    const selection = get().smartEraseSelection;
+    if (!selection) {
+      set({ statusText: "请先在图片上框选要消除的内容" });
+      return;
+    }
+
+    await get().smartEraseRegion(selection);
+    set({ smartEraseSelection: null });
+  },
+  clearForegroundElements: async () => {
+    await mutateCurrentImage(
+      get,
+      set,
+      (context, imageDocument) => {
+        const imageData = context.getImageData(0, 0, imageDocument.width, imageDocument.height);
+        const overlays = detectForegroundOverlays(imageData);
+        if (overlays.length === 0) {
+          return false;
+        }
+
+        overlays
+          .filter((overlay) => overlay.kind === "status")
+          .forEach((overlay) => inpaintRegion(imageData, overlay, 8, "auto"));
+        overlays
+          .filter((overlay) => overlay.kind === "dialog")
+          .forEach((overlay) => reconstructLargeOverlay(imageData, overlay));
+        context.putImageData(imageData, 0, 0);
+        return true;
+      },
+      "正在识别并清除前景元素",
+      "前景元素已智能清除",
+      "未识别到可自动清除的大面积前景",
+    );
+  },
   changeZoom: (nextZoom) => set({ zoom: clamp(nextZoom, MIN_ZOOM, MAX_ZOOM) }),
   fitToWindow: () => {
     const { imageDocument } = get();
@@ -301,6 +486,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => ({
       pastSlices: [...state.pastSlices, slices],
       futureSlices: [],
+      futureImages: [],
+      undoHistory: [...state.undoHistory, "slices"],
+      redoHistory: [],
     }));
   },
   updateSlice: (sliceId, patch) => {
@@ -329,12 +517,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   closeCurrentImage: () => {
     set((state) => ({
       imageDocument: replaceImage(state.imageDocument, null),
+      imageBlob: null,
       slices: [],
       pastSlices: [],
       futureSlices: [],
+      pastImages: [],
+      futureImages: [],
+      undoHistory: [],
+      redoHistory: [],
       selectedSliceId: null,
       scanPreviewSlices: [],
       isPickingScanBackground: false,
+      isPickingBrushColor: false,
+      smartEraseSelection: null,
       pan: { x: 0, y: 0 },
       zoom: 1,
       pointerInfo: "坐标 0, 0",
@@ -343,39 +538,93 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
   },
   undo: () => {
-    const { pastSlices, slices } = get();
-    if (pastSlices.length === 0) {
+    const state = get();
+    const historyKind = state.undoHistory.at(-1);
+    if (!historyKind) {
       return;
     }
 
-    const previous = pastSlices[pastSlices.length - 1];
-    set((state) => ({
-      pastSlices: state.pastSlices.slice(0, -1),
-      futureSlices: [slices, ...state.futureSlices],
-      slices: previous,
-      selectedSliceId:
-        state.selectedSliceId && previous.some((slice) => slice.id === state.selectedSliceId)
-          ? state.selectedSliceId
-          : previous.at(-1)?.id ?? null,
-      statusText: "已撤销",
+    if (historyKind === "slices") {
+      const previous = state.pastSlices.at(-1);
+      if (!previous) {
+        return;
+      }
+
+      set((current) => ({
+        pastSlices: current.pastSlices.slice(0, -1),
+        futureSlices: [current.slices, ...current.futureSlices],
+        slices: previous,
+        selectedSliceId:
+          current.selectedSliceId && previous.some((slice) => slice.id === current.selectedSliceId)
+            ? current.selectedSliceId
+            : previous.at(-1)?.id ?? null,
+        undoHistory: current.undoHistory.slice(0, -1),
+        redoHistory: ["slices", ...current.redoHistory],
+        statusText: "已撤销",
+      }));
+      return;
+    }
+
+    const previous = state.pastImages.at(-1);
+    const currentSnapshot = createImageSnapshot(state.imageDocument, state.imageBlob);
+    if (!previous || !currentSnapshot) {
+      return;
+    }
+
+    set((current) => ({
+      imageDocument: restoreImageSnapshot(current.imageDocument, previous),
+      imageBlob: previous.blob,
+      pastImages: current.pastImages.slice(0, -1),
+      futureImages: [currentSnapshot, ...current.futureImages],
+      undoHistory: current.undoHistory.slice(0, -1),
+      redoHistory: ["image", ...current.redoHistory],
+      scanPreviewSlices: [],
+      statusText: "已撤销图片编辑",
     }));
   },
   redo: () => {
-    const { futureSlices, slices } = get();
-    if (futureSlices.length === 0) {
+    const state = get();
+    const historyKind = state.redoHistory[0];
+    if (!historyKind) {
       return;
     }
 
-    const next = futureSlices[0];
-    set((state) => ({
-      futureSlices: state.futureSlices.slice(1),
-      pastSlices: [...state.pastSlices, slices],
-      slices: next,
-      selectedSliceId:
-        state.selectedSliceId && next.some((slice) => slice.id === state.selectedSliceId)
-          ? state.selectedSliceId
-          : next.at(-1)?.id ?? null,
-      statusText: "已重做",
+    if (historyKind === "slices") {
+      const next = state.futureSlices[0];
+      if (!next) {
+        return;
+      }
+
+      set((current) => ({
+        futureSlices: current.futureSlices.slice(1),
+        pastSlices: [...current.pastSlices, current.slices],
+        slices: next,
+        selectedSliceId:
+          current.selectedSliceId && next.some((slice) => slice.id === current.selectedSliceId)
+            ? current.selectedSliceId
+            : next.at(-1)?.id ?? null,
+        undoHistory: [...current.undoHistory, "slices"],
+        redoHistory: current.redoHistory.slice(1),
+        statusText: "已重做",
+      }));
+      return;
+    }
+
+    const next = state.futureImages[0];
+    const currentSnapshot = createImageSnapshot(state.imageDocument, state.imageBlob);
+    if (!next || !currentSnapshot) {
+      return;
+    }
+
+    set((current) => ({
+      imageDocument: restoreImageSnapshot(current.imageDocument, next),
+      imageBlob: next.blob,
+      pastImages: [...current.pastImages, currentSnapshot],
+      futureImages: current.futureImages.slice(1),
+      undoHistory: [...current.undoHistory, "image"],
+      redoHistory: current.redoHistory.slice(1),
+      scanPreviewSlices: [],
+      statusText: "已重做图片编辑",
     }));
   },
   handleNumericChange: (field, value) => {
@@ -673,12 +922,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           hasAlpha,
           url,
         }),
+        imageBlob: imageFile,
         slices: [],
         pastSlices: [],
         futureSlices: [],
+        pastImages: [],
+        futureImages: [],
+        undoHistory: [],
+        redoHistory: [],
         selectedSliceId: null,
         scanPreviewSlices: [],
         isPickingScanBackground: false,
+        isPickingBrushColor: false,
+        smartEraseSelection: null,
         pan: { x: 0, y: 0 },
         zoom: calculateFitZoom(bitmap.width, bitmap.height),
         statusText: "图片已导入",
@@ -753,12 +1009,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           hasAlpha: project.image.hasAlpha,
           url,
         }),
+        imageBlob: imageFile,
         slices: restoredSlices,
         pastSlices: [],
         futureSlices: [],
+        pastImages: [],
+        futureImages: [],
+        undoHistory: [],
+        redoHistory: [],
         selectedSliceId: restoredSelectedId,
         scanPreviewSlices: [],
         isPickingScanBackground: false,
+        isPickingBrushColor: false,
+        smartEraseSelection: null,
         pan: { x: 0, y: 0 },
         zoom: calculateFitZoom(bitmap.width, bitmap.height),
         pointerInfo: "坐标 0, 0",
@@ -958,52 +1221,148 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ errorMessage: "导出目录无法打开，请确认目录还存在。", statusText: "打开目录失败" });
     }
   },
-  handleExport: async () => {
-    const state = get();
-    if (!state.imageDocument) {
-      set({ statusText: "请先导入图片" });
+  handleExport: async () => performWorkspaceExport(get, set),
+  handleExportSlice: async (sliceId) => {
+    if (!get().slices.some((slice) => slice.id === sliceId)) {
+      set({ statusText: "选区不存在" });
       return;
     }
 
-    set({ isExporting: true, errorMessage: null, statusText: "正在导出" });
-
-    try {
-      const result = await runExport({
-        imageDocument: state.imageDocument,
-        slices: state.slices,
-        exportScope: state.exportScope,
-        selectedSliceId: state.selectedSliceId,
-        targetPlatform: state.targetPlatform,
-        enabledWebOutputIds: state.enabledWebOutputIds,
-        enabledAndroidOutputIds: state.enabledAndroidOutputIds,
-        enabledIosOutputIds: state.enabledIosOutputIds,
-        enabledCustomOutputIds: state.enabledCustomOutputIds,
-        customIconOutputs: state.customIconOutputs,
-        androidResourceName: state.androidResourceName,
-        filePrefix: state.filePrefix,
-        exportFormat: state.exportFormat,
-        jpgBackground: state.jpgBackground,
-        exportMode: state.exportMode,
-        transparentBackground:
-          state.exportTransparentBackground ? { color: state.scanBackgroundColor, tolerance: state.scanColorTolerance } : null,
-      });
-
-      if (result.ok) {
-        set({ statusText: result.statusText, lastExportDirectory: result.exportDirectory ?? state.lastExportDirectory });
-        return;
-      }
-
-      set({ errorMessage: result.errorMessage, statusText: result.statusText });
-    } catch (error) {
-      set({
-        errorMessage: `导出失败：${getErrorMessage(error)}`,
-        statusText: "导出失败",
-      });
-    } finally {
-      set({ isExporting: false });
-    }
+    set({ selectedSliceId: sliceId });
+    await performWorkspaceExport(get, set, "selected", sliceId);
   },
 }));
+
+type WorkspaceSetter = (
+  partial: Partial<WorkspaceState> | ((state: WorkspaceState) => Partial<WorkspaceState>),
+) => void;
+
+async function mutateCurrentImage(
+  get: () => WorkspaceState,
+  set: WorkspaceSetter,
+  mutate: (context: CanvasRenderingContext2D, imageDocument: ImageDocument) => void | boolean,
+  pendingStatus: string,
+  completeStatus: string,
+  unchangedStatus?: string,
+) {
+  const sourceState = get();
+  const sourceDocument = sourceState.imageDocument;
+  const sourceSnapshot = createImageSnapshot(sourceDocument, sourceState.imageBlob);
+  if (!sourceDocument || !sourceSnapshot) {
+    set({ statusText: "请先导入图片" });
+    return;
+  }
+
+  set({ isApplyingImageEdit: true, errorMessage: null, statusText: pendingStatus });
+
+  try {
+    const sourceImage = await loadImage(sourceDocument.url);
+    const canvas = document.createElement("canvas");
+    canvas.width = sourceDocument.width;
+    canvas.height = sourceDocument.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("Canvas is unavailable");
+    }
+
+    context.drawImage(sourceImage, 0, 0);
+    const changed = mutate(context, sourceDocument);
+    if (changed === false) {
+      set({ isApplyingImageEdit: false, statusText: unchangedStatus ?? "图片无需修改" });
+      return;
+    }
+    const blob = await canvasToBlob(canvas, "image/png");
+    const nextUrl = URL.createObjectURL(blob);
+
+    set((current) => {
+      if (current.imageDocument?.url !== sourceDocument.url) {
+        URL.revokeObjectURL(nextUrl);
+        return { isApplyingImageEdit: false };
+      }
+
+      return {
+        imageDocument: replaceImage(current.imageDocument, {
+          ...sourceDocument,
+          fileName: toPngFileName(sourceDocument.fileName),
+          fileSize: blob.size,
+          mimeType: "image/png",
+          url: nextUrl,
+        }),
+        imageBlob: blob,
+        pastImages: [...current.pastImages, sourceSnapshot],
+        futureImages: [],
+        futureSlices: [],
+        undoHistory: [...current.undoHistory, "image"],
+        redoHistory: [],
+        isApplyingImageEdit: false,
+        scanPreviewSlices: [],
+        statusText: completeStatus,
+      };
+    });
+  } catch {
+    set({
+      isApplyingImageEdit: false,
+      errorMessage: "图片编辑失败，请重新导入图片后再试。",
+      statusText: "图片编辑失败",
+    });
+  }
+}
+
+async function performWorkspaceExport(
+  get: () => WorkspaceState,
+  set: WorkspaceSetter,
+  exportScope?: ExportScope,
+  selectedSliceId?: string,
+) {
+  const state = get();
+  if (!state.imageDocument) {
+    set({ statusText: "请先导入图片" });
+    return;
+  }
+
+  set({ isExporting: true, errorMessage: null, statusText: exportScope === "selected" ? "正在导出当前选区" : "正在导出" });
+
+  try {
+    const result = await runExport({
+      imageDocument: state.imageDocument,
+      slices: state.slices,
+      exportScope: exportScope ?? state.exportScope,
+      selectedSliceId: selectedSliceId ?? state.selectedSliceId,
+      targetPlatform: state.targetPlatform,
+      enabledWebOutputIds: state.enabledWebOutputIds,
+      enabledAndroidOutputIds: state.enabledAndroidOutputIds,
+      enabledIosOutputIds: state.enabledIosOutputIds,
+      enabledCustomOutputIds: state.enabledCustomOutputIds,
+      customIconOutputs: state.customIconOutputs,
+      androidResourceName: state.androidResourceName,
+      filePrefix: state.filePrefix,
+      exportFormat: state.exportFormat,
+      jpgBackground: state.jpgBackground,
+      exportMode: state.exportMode,
+      transparentBackground:
+        state.exportTransparentBackground ? { color: state.scanBackgroundColor, tolerance: state.scanColorTolerance } : null,
+    });
+
+    if (result.ok) {
+      set({ statusText: result.statusText, lastExportDirectory: result.exportDirectory ?? state.lastExportDirectory });
+      return;
+    }
+
+    set({ errorMessage: result.errorMessage, statusText: result.statusText });
+  } catch (error) {
+    set({
+      errorMessage: `导出失败：${getErrorMessage(error)}`,
+      statusText: "导出失败",
+    });
+  } finally {
+    set({ isExporting: false });
+  }
+}
+
+function toPngFileName(fileName: string) {
+  const baseName = fileName.replace(/\.[^.]+$/, "");
+  return `${baseName || "edited-image"}.png`;
+}
 
 async function trimSlices(
   sliceIds: string[],

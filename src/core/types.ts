@@ -74,7 +74,14 @@ export type PanState = {
   y: number;
 };
 
-export type ToolId = "select" | "rect" | "rounded" | "square" | "circle" | "ellipse" | "grid" | "scan";
+export type ImagePoint = {
+  x: number;
+  y: number;
+};
+
+export type ImageRegion = ImagePoint & ImageSize;
+
+export type ToolId = "select" | "rect" | "rounded" | "circle" | "grid" | "scan" | "brush" | "smart-erase";
 export type ExportScope = "selected" | "enabled";
 export type TargetPlatform = "generic" | "android" | "ios" | "web" | "custom";
 export type ScanMode = "auto" | "alpha" | "color";
@@ -83,6 +90,8 @@ export type ScanMergeStrategy = "none" | "nearby" | "row";
 export type Interaction =
   | { mode: "pan"; pointerX: number; pointerY: number; pan: PanState }
   | { mode: "create"; sliceId: string; startX: number; startY: number }
+  | { mode: "brush" }
+  | { mode: "smart-erase"; startX: number; startY: number }
   | { mode: "move"; sliceId: string; pointerX: number; pointerY: number; original: SliceRegion }
   | {
       mode: "resize";

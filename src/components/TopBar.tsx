@@ -16,8 +16,8 @@ export function TopBar() {
   const language = useWorkspaceStore((state) => state.language);
   const imageDocument = useWorkspaceStore((state) => state.imageDocument);
   const zoom = useWorkspaceStore((state) => state.zoom);
-  const pastSlices = useWorkspaceStore((state) => state.pastSlices);
-  const futureSlices = useWorkspaceStore((state) => state.futureSlices);
+  const undoHistory = useWorkspaceStore((state) => state.undoHistory);
+  const redoHistory = useWorkspaceStore((state) => state.redoHistory);
   const slices = useWorkspaceStore((state) => state.slices);
   const selectedSliceId = useWorkspaceStore((state) => state.selectedSliceId);
   const exportScope = useWorkspaceStore((state) => state.exportScope);
@@ -136,12 +136,12 @@ export function TopBar() {
           </button>
         </Hint>
         <Hint text={t("undoHint")}>
-          <button className="icon-button" disabled={pastSlices.length === 0} onClick={undo} type="button" aria-label={t("undo")}>
+          <button className="icon-button" disabled={undoHistory.length === 0} onClick={undo} type="button" aria-label={t("undo")}>
             <Undo2 size={16} />
           </button>
         </Hint>
         <Hint text={t("redoHint")}>
-          <button className="icon-button" disabled={futureSlices.length === 0} onClick={redo} type="button" aria-label={t("redo")}>
+          <button className="icon-button" disabled={redoHistory.length === 0} onClick={redo} type="button" aria-label={t("redo")}>
             <Redo2 size={16} />
           </button>
         </Hint>

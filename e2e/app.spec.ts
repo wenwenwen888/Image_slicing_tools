@@ -18,6 +18,19 @@ const NON_WHITE_BACKGROUND_ICON = createRgbaPng(120, 120, (x, y) => {
   const inIcon = x >= 35 && x < 86 && y >= 35 && y < 86;
   return inIcon ? [225, 30, 38, 255] : [8, 25, 42, 255];
 });
+const GRADIENT_WITH_LABEL = createRgbaPng(200, 100, (x, y) => {
+  const inLabel = x >= 78 && x < 122 && y >= 40 && y < 60;
+  return inLabel ? [255, 255, 255, 255] : [120 + Math.round(x * 0.5), 55 + Math.round(y * 0.6), 25 + Math.round(x * 0.2), 255];
+});
+const FOREGROUND_OVERLAY_SCREEN = createRgbaPng(240, 360, (x, y) => {
+  const inDialog = x >= 35 && x < 205 && y >= 92 && y < 320;
+  const inLeftStatus = x >= 14 && x < 42 && y >= 14 && y < 25;
+  const inRightStatus = x >= 176 && x < 226 && y >= 13 && y < 26;
+  if (inDialog || inLeftStatus || inRightStatus) {
+    return [248, 248, 248, 255];
+  }
+  return [20 + Math.round(x / 3), 30 + Math.round(y / 5), 70 + Math.round(x / 6), 255];
+});
 
 async function createClosedTextPng(page: Page) {
   const base64 = await page.evaluate(async () => {
@@ -73,6 +86,23 @@ async function dropImage(page: Page, name: string, buffer: Buffer) {
   await canvas.dispatchEvent("drop", { dataTransfer });
   await expect(page.getByTestId("source-image")).toBeVisible();
   await expect(page.getByTestId("status-text")).toHaveText("图片已导入");
+}
+
+async function sampleSourcePixel(page: Page, x: number, y: number) {
+  return page.getByTestId("source-image").evaluate(
+    (image, point) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Canvas unavailable");
+      }
+      context.drawImage(image, 0, 0);
+      return Array.from(context.getImageData(point.x, point.y, 1, 1).data);
+    },
+    { x, y },
+  );
 }
 
 async function createRectSlice(page: Page, start = 0.2, end = 0.7, expectedCount = 1) {
@@ -171,6 +201,108 @@ test("可以按固定比例创建圆形切片", async ({ page }) => {
   await expect(page.getByTestId("slice-box")).toHaveClass(/ellipse/);
 });
 
+test("左侧工具栏不再显示正方形和椭圆工具", async ({ page }) => {
+  await expect(page.getByTestId("tool-square")).toHaveCount(0);
+  await expect(page.getByTestId("tool-ellipse")).toHaveCount(0);
+});
+
+test("画笔可以取色、调整大小并写入图片", async ({ page }) => {
+  await importSampleImage(page);
+  await page.getByTestId("tool-brush").click();
+  await expect(page.getByTestId("brush-panel")).toBeVisible();
+  const canvas = page.getByTestId("canvas-panel");
+  const image = page.getByTestId("source-image");
+  const box = await image.boundingBox();
+  if (!box) {
+    throw new Error("source image has no bounding box");
+  }
+  await page.getByTestId("brush-pick-color").click();
+  const pickerCursor = await canvas.evaluate((element) => getComputedStyle(element).cursor);
+  expect(pickerCursor).toContain("data:image/svg+xml");
+  await page.mouse.click(box.x + 2, box.y + 2);
+  await expect(page.getByTestId("brush-color")).toHaveValue("#dc2828");
+  await page.getByTestId("brush-color").evaluate((input) => {
+    const colorInput = input as HTMLInputElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setValue?.call(colorInput, "#16a34a");
+    colorInput.dispatchEvent(new Event("input", { bubbles: true }));
+    colorInput.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.getByTestId("brush-color")).toHaveValue("#16a34a");
+  await page.getByTestId("brush-size").fill("24");
+  await page.getByLabel("关闭工具设置").click();
+  await expect(page.getByTestId("brush-panel")).toHaveCount(0);
+  await expect(page.getByTestId("tool-brush")).toHaveClass(/active/);
+
+  await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.5);
+  await expect(page.getByTestId("brush-cursor")).toBeVisible();
+  await expect(page.getByTestId("brush-cursor")).toHaveCSS("width", "24px");
+  await expect(canvas).toHaveCSS("cursor", "none");
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.5);
+  await page.mouse.up();
+  await expect(page.getByTestId("status-text")).toHaveText("画笔涂抹已应用");
+  await expect.poll(() => sampleSourcePixel(page, 100, 100)).toEqual([22, 163, 74, 255]);
+
+  const undoButton = page.getByRole("button", { name: "撤销" });
+  const redoButton = page.getByRole("button", { name: "重做" });
+  await expect(undoButton).toBeEnabled();
+  await undoButton.click();
+  await expect(page.getByTestId("status-text")).toHaveText("已撤销图片编辑");
+  await expect.poll(() => sampleSourcePixel(page, 100, 100)).toEqual([220, 40, 40, 255]);
+  await expect(redoButton).toBeEnabled();
+  await redoButton.click();
+  await expect.poll(() => sampleSourcePixel(page, 100, 100)).toEqual([22, 163, 74, 255]);
+});
+
+test("任意工具下都可以从图片外拖动画布", async ({ page }) => {
+  await importSampleImage(page);
+  await page.getByTestId("tool-brush").click();
+  const panel = await page.getByTestId("canvas-panel").boundingBox();
+  const before = await page.getByTestId("source-image").boundingBox();
+  if (!panel || !before) {
+    throw new Error("canvas has no bounding box");
+  }
+
+  const startX = panel.x + panel.width - 24;
+  const startY = panel.y + panel.height / 2;
+  expect(startX).toBeGreaterThan(before.x + before.width);
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX - 48, startY + 28);
+  await page.mouse.up();
+
+  const after = await page.getByTestId("source-image").boundingBox();
+  expect(after).toBeTruthy();
+  expect(after!.x).toBeLessThan(before.x - 40);
+  expect(after!.y).toBeGreaterThan(before.y + 20);
+  await expect(page.getByTestId("tool-brush")).toHaveClass(/active/);
+});
+
+test("智能消除可以恢复文字下方的渐变背景", async ({ page }) => {
+  await importImage(page, "gradient-label.png", GRADIENT_WITH_LABEL);
+  await page.getByTestId("tool-smart-erase").click();
+  const image = page.getByTestId("source-image");
+  const box = await image.boundingBox();
+  if (!box) {
+    throw new Error("source image has no bounding box");
+  }
+
+  await page.mouse.move(box.x + box.width * 0.36, box.y + box.height * 0.32);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.64, box.y + box.height * 0.68);
+  await page.mouse.up();
+  await expect(page.getByTestId("smart-erase-box")).toBeVisible();
+  await page.getByTestId("apply-smart-erase").click();
+  await expect(page.getByTestId("status-text")).toHaveText("智能消除已完成");
+  await expect.poll(() => sampleSourcePixel(page, 100, 50)).toEqual([170, 85, 45, 255]);
+  await page.getByRole("button", { name: "撤销" }).click();
+  await expect(page.getByTestId("status-text")).toHaveText("已撤销图片编辑");
+  await expect.poll(() => sampleSourcePixel(page, 100, 50)).toEqual([255, 255, 255, 255]);
+  await page.getByRole("button", { name: "重做" }).click();
+  await expect.poll(() => sampleSourcePixel(page, 100, 50)).toEqual([170, 85, 45, 255]);
+});
+
 test("可以批量导出多个启用切片为 ZIP", async ({ page }) => {
   await importSampleImage(page);
   await page.getByTestId("tool-grid").click();
@@ -190,6 +322,34 @@ test("可以批量导出多个启用切片为 ZIP", async ({ page }) => {
   expect(files).toHaveLength(9);
   expect(files[0]).toMatch(/^slice_001_grid_r1_c1_001\.png$/);
   await expect(page.getByTestId("status-text")).toHaveText("已导出 9 个切片");
+});
+
+test("可以从右键菜单单独导出当前选区", async ({ page }) => {
+  await importSampleImage(page);
+  await createRectSlice(page);
+  await createRectSlice(page, 0.08, 0.18, 2);
+
+  await page.getByTestId("slice-box").nth(1).click({ button: "right" });
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("context-export-slice").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("slice_001_slice_2.png");
+  await expect(page.getByTestId("status-text")).toHaveText("已导出 1 个切片");
+});
+
+test("可以智能清除大面积前景并撤销", async ({ page }) => {
+  await importImage(page, "foreground-screen.png", FOREGROUND_OVERLAY_SCREEN);
+  await page.locator(".image-stage").click({ button: "right", position: { x: 8, y: 180 } });
+  await page.getByTestId("context-clear-foreground").click();
+  await expect(page.getByTestId("status-text")).toHaveText("前景元素已智能清除", { timeout: 15_000 });
+
+  const restored = await sampleSourcePixel(page, 120, 200);
+  expect(restored[0]).toBeLessThan(100);
+  expect(restored[1]).toBeLessThan(110);
+  expect(restored[2]).toBeLessThan(130);
+
+  await page.getByRole("button", { name: "撤销" }).click();
+  await expect.poll(() => sampleSourcePixel(page, 120, 200)).toEqual([248, 248, 248, 255]);
 });
 
 test("可以导出 Web icon 资源包", async ({ page }) => {
@@ -266,6 +426,7 @@ test("可以右键删除选区并移除所有选区", async ({ page }) => {
 
   const firstSlice = page.getByTestId("slice-box").first();
   await firstSlice.click({ button: "right" });
+  await expect(page.getByTestId("context-smart-erase")).toBeVisible();
   await page.getByTestId("context-delete-slice").click();
   await expect(page.getByTestId("slice-list-item")).toHaveCount(1);
 

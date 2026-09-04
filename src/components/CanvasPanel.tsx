@@ -2,7 +2,7 @@ import { FolderOpen, X } from "lucide-react";
 import { ChangeEvent, DragEvent, MouseEvent, PointerEvent, WheelEvent, useRef, useState } from "react";
 import { clamp, getAspectRatioValue, normalizeRect, resizeSlice } from "../core/geometry";
 import { isAcceptedImageFile } from "../core/files";
-import type { AspectRatioPreset, Interaction, ResizeHandle, SliceRegion, SliceShape, ToolId } from "../core/types";
+import type { AspectRatioPreset, ImagePoint, Interaction, ResizeHandle, SliceRegion, SliceShape, ToolId } from "../core/types";
 import { useWorkspaceStore } from "../store/workspace-store";
 
 type CanvasMenu =
@@ -15,7 +15,10 @@ export function CanvasPanel() {
   const imageRef = useRef<HTMLImageElement>(null);
   const emptyFileInputRef = useRef<HTMLInputElement>(null);
   const interactionRef = useRef<Interaction | null>(null);
+  const brushPointsRef = useRef<ImagePoint[]>([]);
   const [contextMenu, setContextMenu] = useState<CanvasMenu>(null);
+  const [brushPreview, setBrushPreview] = useState<ImagePoint[]>([]);
+  const [brushCursorPoint, setBrushCursorPoint] = useState<ImagePoint | null>(null);
   const imageDocument = useWorkspaceStore((state) => state.imageDocument);
   const activeTool = useWorkspaceStore((state) => state.activeTool);
   const slices = useWorkspaceStore((state) => state.slices);
@@ -26,6 +29,11 @@ export function CanvasPanel() {
   const isPanning = useWorkspaceStore((state) => state.isPanning);
   const isDraggingOver = useWorkspaceStore((state) => state.isDraggingOver);
   const isPickingScanBackground = useWorkspaceStore((state) => state.isPickingScanBackground);
+  const isPickingBrushColor = useWorkspaceStore((state) => state.isPickingBrushColor);
+  const brushColor = useWorkspaceStore((state) => state.brushColor);
+  const brushSize = useWorkspaceStore((state) => state.brushSize);
+  const smartEraseSelection = useWorkspaceStore((state) => state.smartEraseSelection);
+  const isApplyingImageEdit = useWorkspaceStore((state) => state.isApplyingImageEdit);
   const errorMessage = useWorkspaceStore((state) => state.errorMessage);
   const setIsDraggingOver = useWorkspaceStore((state) => state.setIsDraggingOver);
   const setIsPanning = useWorkspaceStore((state) => state.setIsPanning);
@@ -41,6 +49,12 @@ export function CanvasPanel() {
   const closeCurrentImage = useWorkspaceStore((state) => state.closeCurrentImage);
   const deleteSlice = useWorkspaceStore((state) => state.deleteSlice);
   const sampleScanBackgroundAt = useWorkspaceStore((state) => state.sampleScanBackgroundAt);
+  const sampleBrushColorAt = useWorkspaceStore((state) => state.sampleBrushColorAt);
+  const applyBrushStroke = useWorkspaceStore((state) => state.applyBrushStroke);
+  const setSmartEraseSelection = useWorkspaceStore((state) => state.setSmartEraseSelection);
+  const smartEraseSlice = useWorkspaceStore((state) => state.smartEraseSlice);
+  const clearForegroundElements = useWorkspaceStore((state) => state.clearForegroundElements);
+  const handleExportSlice = useWorkspaceStore((state) => state.handleExportSlice);
   const pushHistory = useWorkspaceStore((state) => state.pushHistory);
   const updateSlice = useWorkspaceStore((state) => state.updateSlice);
 
@@ -104,19 +118,54 @@ export function CanvasPanel() {
 
     const point = getImagePoint(event);
 
+    if (!point) {
+      interactionRef.current = {
+        mode: "pan",
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        pan: state.pan,
+      };
+      setSelectedSliceId(null);
+      setIsPanning(true);
+      setStatusText("拖动画布");
+      return;
+    }
+
     if (state.isPickingScanBackground) {
-      if (point) {
-        void sampleScanBackgroundAt(point.x, point.y);
+      void sampleScanBackgroundAt(point.x, point.y);
+      return;
+    }
+
+    if (state.isPickingBrushColor) {
+      void sampleBrushColorAt(point.x, point.y);
+      return;
+    }
+
+    if (state.activeTool === "brush") {
+      if (state.isApplyingImageEdit) {
+        return;
       }
+
+      brushPointsRef.current = [point];
+      setBrushPreview([point]);
+      interactionRef.current = { mode: "brush" };
+      setStatusText("画笔涂抹中");
+      return;
+    }
+
+    if (state.activeTool === "smart-erase") {
+      if (state.isApplyingImageEdit) {
+        return;
+      }
+
+      setSmartEraseSelection({ x: point.x, y: point.y, width: 1, height: 1 });
+      interactionRef.current = { mode: "smart-erase", startX: point.x, startY: point.y };
+      setStatusText("框选要智能消除的区域");
       return;
     }
 
     const drawingOptions = getDrawingOptions(state.activeTool, state.defaultSliceShape, state.aspectRatioPreset);
     if (drawingOptions) {
-      if (!point) {
-        return;
-      }
-
       pushHistory();
       const sliceId = crypto.randomUUID();
       const nextSlice: SliceRegion = {
@@ -155,6 +204,10 @@ export function CanvasPanel() {
   function handlePointerMove(event: PointerEvent<HTMLElement>) {
     const point = getImagePoint(event);
     setPointerInfo(point ? `坐标 ${point.x}, ${point.y}` : "坐标 --, --");
+    const currentState = useWorkspaceStore.getState();
+    setBrushCursorPoint(
+      point && currentState.activeTool === "brush" && !currentState.isPickingBrushColor ? point : null,
+    );
 
     const interaction = interactionRef.current;
     const documentImage = useWorkspaceStore.getState().imageDocument;
@@ -167,6 +220,36 @@ export function CanvasPanel() {
         x: interaction.pan.x + event.clientX - interaction.pointerX,
         y: interaction.pan.y + event.clientY - interaction.pointerY,
       });
+      return;
+    }
+
+    if (interaction.mode === "brush") {
+      if (!point) {
+        return;
+      }
+
+      const previousPoint = brushPointsRef.current.at(-1);
+      if (!previousPoint || Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y) >= 1) {
+        brushPointsRef.current = [...brushPointsRef.current, point];
+        setBrushPreview(brushPointsRef.current);
+      }
+      return;
+    }
+
+    if (interaction.mode === "smart-erase") {
+      if (!point) {
+        return;
+      }
+
+      setSmartEraseSelection(
+        normalizeRect(
+          interaction.startX,
+          interaction.startY,
+          point.x - interaction.startX,
+          point.y - interaction.startY,
+          documentImage,
+        ),
+      );
       return;
     }
 
@@ -226,7 +309,20 @@ export function CanvasPanel() {
     }
 
     const state = useWorkspaceStore.getState();
-    if (interaction?.mode === "create") {
+    if (interaction?.mode === "brush") {
+      const points = brushPointsRef.current;
+      brushPointsRef.current = [];
+      setBrushPreview([]);
+      void applyBrushStroke(points);
+    } else if (interaction?.mode === "smart-erase") {
+      const selection = state.smartEraseSelection;
+      if (!selection || selection.width < 3 || selection.height < 3) {
+        setSmartEraseSelection(null);
+        setStatusText("消除区域太小，已取消");
+      } else {
+        setStatusText("区域已框选，点击一键智能消除");
+      }
+    } else if (interaction?.mode === "create") {
       const createdSlice = state.slices.find((slice) => slice.id === interaction.sliceId);
       if (createdSlice && (createdSlice.width < 3 || createdSlice.height < 3)) {
         useWorkspaceStore.setState({
@@ -326,7 +422,9 @@ export function CanvasPanel() {
         "canvas-panel",
         imageDocument ? "has-image" : "",
         isDrawingTool(activeTool) ? "is-rect-tool" : "",
-        isPickingScanBackground ? "is-color-picker" : "",
+        activeTool === "brush" || activeTool === "smart-erase" ? "is-image-edit-tool" : "",
+        brushCursorPoint ? "has-brush-cursor" : "",
+        isPickingScanBackground || isPickingBrushColor ? "is-color-picker" : "",
         isPanning ? "is-panning" : "",
         isDraggingOver ? "is-dragging-over" : "",
       ].join(" ")}
@@ -344,6 +442,11 @@ export function CanvasPanel() {
       onDrop={handleDrop}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
+      onPointerLeave={() => {
+        if (!interactionRef.current) {
+          setBrushCursorPoint(null);
+        }
+      }}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
       onWheel={handleWheel}
@@ -360,6 +463,55 @@ export function CanvasPanel() {
           onContextMenu={handleImageContextMenu}
         >
           <img alt={imageDocument.fileName} data-testid="source-image" draggable={false} ref={imageRef} src={imageDocument.url} />
+          {brushCursorPoint && activeTool === "brush" && !isPickingBrushColor && (
+            <span
+              aria-hidden="true"
+              className="brush-cursor"
+              data-testid="brush-cursor"
+              style={{
+                color: brushColor,
+                height: brushSize,
+                left: brushCursorPoint.x,
+                top: brushCursorPoint.y,
+                width: brushSize,
+              }}
+            />
+          )}
+          {brushPreview.length > 0 && (
+            <svg
+              aria-hidden="true"
+              className="image-edit-overlay"
+              data-testid="brush-preview"
+              viewBox={`0 0 ${imageDocument.width} ${imageDocument.height}`}
+            >
+              {brushPreview.length === 1 ? (
+                <circle cx={brushPreview[0].x} cy={brushPreview[0].y} fill={brushColor} r={brushSize / 2} />
+              ) : (
+                <polyline
+                  fill="none"
+                  points={brushPreview.map((point) => `${point.x},${point.y}`).join(" ")}
+                  stroke={brushColor}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={brushSize}
+                />
+              )}
+            </svg>
+          )}
+          {smartEraseSelection && (
+            <div
+              className="smart-erase-box"
+              data-testid="smart-erase-box"
+              style={{
+                left: smartEraseSelection.x,
+                top: smartEraseSelection.y,
+                width: smartEraseSelection.width,
+                height: smartEraseSelection.height,
+              }}
+            >
+              <span>待消除</span>
+            </div>
+          )}
           {slices.map((slice) => {
             const selected = slice.id === selectedSliceId;
             return (
@@ -475,20 +627,58 @@ export function CanvasPanel() {
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextMenu.type === "image" ? (
-            <button data-testid="context-close-image" onClick={confirmCloseCurrentImage} type="button">
-              关闭当前图片
-            </button>
+            <>
+              <button
+                data-testid="context-clear-foreground"
+                disabled={isApplyingImageEdit}
+                onClick={() => {
+                  setContextMenu(null);
+                  void clearForegroundElements();
+                }}
+                type="button"
+              >
+                智能清除前景元素
+              </button>
+              <button data-testid="context-close-image" onClick={confirmCloseCurrentImage} type="button">
+                关闭当前图片
+              </button>
+            </>
           ) : (
-            <button
-              data-testid="context-delete-slice"
-              onClick={() => {
-                deleteSlice(contextMenu.sliceId);
-                setContextMenu(null);
-              }}
-              type="button"
-            >
-              删除选区
-            </button>
+            <>
+              <button
+                data-testid="context-export-slice"
+                onClick={() => {
+                  const { sliceId } = contextMenu;
+                  setContextMenu(null);
+                  void handleExportSlice(sliceId);
+                }}
+                type="button"
+              >
+                单独导出该选区
+              </button>
+              <button
+                data-testid="context-smart-erase"
+                disabled={isApplyingImageEdit}
+                onClick={() => {
+                  const sliceId = contextMenu.sliceId;
+                  setContextMenu(null);
+                  void smartEraseSlice(sliceId);
+                }}
+                type="button"
+              >
+                一键智能消除选区内容
+              </button>
+              <button
+                data-testid="context-delete-slice"
+                onClick={() => {
+                  deleteSlice(contextMenu.sliceId);
+                  setContextMenu(null);
+                }}
+                type="button"
+              >
+                删除选区
+              </button>
+            </>
           )}
         </div>
       )}
@@ -501,7 +691,7 @@ function currentZoomFallback() {
 }
 
 function isDrawingTool(toolId: ToolId) {
-  return ["rect", "rounded", "square", "circle", "ellipse"].includes(toolId);
+  return ["rect", "rounded", "circle"].includes(toolId);
 }
 
 function getDrawingOptions(toolId: ToolId, fallbackShape: SliceShape, fallbackRatio: AspectRatioPreset) {
@@ -515,14 +705,6 @@ function getDrawingOptions(toolId: ToolId, fallbackShape: SliceShape, fallbackRa
 
   if (toolId === "circle") {
     return { shape: "ellipse" as const, aspectRatio: "1:1" as const };
-  }
-
-  if (toolId === "ellipse") {
-    return { shape: "ellipse" as const, aspectRatio: fallbackRatio };
-  }
-
-  if (toolId === "square") {
-    return { shape: "rect" as const, aspectRatio: "1:1" as const };
   }
 
   return { shape: fallbackShape, aspectRatio: fallbackRatio };
